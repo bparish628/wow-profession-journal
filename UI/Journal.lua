@@ -28,8 +28,8 @@ local SKILL_UP_ATLASES = {
   easy = "Professions-Icon-Skill-Low",
 }
 local DEFAULT_FILTERS = { learned = true, unlearned = true, skillUps = false }
-local SECTION_TITLES = { recipe = "Sources:", node = "Found in:", band = "Zones:" }
-local GRID_TITLES = { recipe = "Reagents:", node = "Yields:", band = "Yields:" }
+local SECTION_TITLES = { recipe = "Sources:", node = "Found in:", band = "Zones:", water = "Zone:" }
+local GRID_TITLES = { recipe = "Reagents:", node = "Yields:", band = "Yields:", water = "Catches:" }
 
 local journal, selectedProfession, selectedEntry
 local collapsed = {}
@@ -178,6 +178,12 @@ local function SetZoneRow(row, text, onClick, tooltip)
 end
 
 local function SkillText(entry)
+  if not PJ.HasLadder(entry) then
+    if entry.minLevel then
+      return NORMAL_FONT_COLOR:WrapTextInColorCode("Zone level: ") .. ("%d-%d"):format(entry.minLevel, entry.maxLevel)
+    end
+    return entry.skill and entry.skill > 0 and (NORMAL_FONT_COLOR:WrapTextInColorCode("Requires: ") .. entry.skill) or ""
+  end
   return NORMAL_FONT_COLOR:WrapTextInColorCode("Requires: ") .. PJ.RequiredSkill(entry) .. "   "
     .. DIFFICULTY_COLORS.optimal:WrapTextInColorCode(PJ.RequiredSkill(entry)) .. " "
     .. DIFFICULTY_COLORS.medium:WrapTextInColorCode(entry.yellow) .. " "
@@ -270,6 +276,14 @@ local BODIES = {
         function() OpenWorldMap(zone.map) end, "Click to open the world map")
     end
     layout.Grid(GRID_TITLES.band, Yields(band))
+  end,
+
+  water = function(layout, water)
+    SetZoneRow(layout.Row(), ("%s %s"):format(ZoneName(water.map),
+      GRAY_FONT_COLOR:WrapTextInColorCode(("(%d-%d)"):format(water.minLevel, water.maxLevel))),
+      function() OpenWorldMap(water.map) end, "Click to open the world map")
+    layout.Text("Fish anywhere in this zone's open water. Catches are listed most common first.")
+    layout.Grid(GRID_TITLES.water, Yields(water))
   end,
 }
 

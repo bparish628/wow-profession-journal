@@ -14,6 +14,7 @@ for _, profession in ipairs({
   { id = 393, name = "Skinning", icon = 134366, group = "gathering", tiers = { 2947 } },
   { id = 185, name = "Cooking", icon = 133971, group = "secondary", tiers = { 2939 } },
   { id = 129, name = "First Aid", icon = 135966, group = "secondary", tiers = { 2942 } },
+  { id = 356, name = "Fishing", icon = 136245, group = "secondary", tiers = { 2943 } },
 }) do
   PJ.RegisterProfession(profession)
 end

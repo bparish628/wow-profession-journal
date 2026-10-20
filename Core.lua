@@ -11,7 +11,10 @@ function PJ.RegisterProfession(profession)
   PJ.professions[#PJ.professions + 1] = profession
 end
 
--- Gathering skill-ups follow a fixed ladder above the required skill.
+-- Herbalism, mining, and skinning skill-ups follow a fixed ladder above the
+-- required skill. Fishing has no such ladder.
+local HERBALISM, MINING, FISHING = 182, 186, 356
+
 local function WithGatheringLadder(entry)
   entry.yellow = entry.skill + 25
   entry.green = entry.skill + 50
@@ -26,7 +29,13 @@ end
 
 function PJ.RegisterNode(node)
   node.kind = "node"
-  PJ.entries[#PJ.entries + 1] = WithGatheringLadder(node)
+  if node.profession ~= FISHING then WithGatheringLadder(node) end
+  PJ.entries[#PJ.entries + 1] = node
+end
+
+function PJ.RegisterWater(water)
+  water.kind = "water"
+  PJ.entries[#PJ.entries + 1] = water
 end
 
 function PJ.RegisterSkinningBand(band)
@@ -55,6 +64,13 @@ local KINDS = {
     name = function(band) return ("Level %d-%d beasts"):format(band.minLevel, band.maxLevel) end,
     icon = function(band) return C_Item.GetItemIconByID(band.yields[1]) end,
   },
+  water = {
+    name = function(water)
+      local info = C_Map.GetMapInfo(water.map)
+      return info and info.name or ("Map " .. water.map)
+    end,
+    icon = function(water) return C_Item.GetItemIconByID(water.yields[1]) end,
+  },
 }
 
 function PJ.EntryName(entry)
@@ -76,7 +92,7 @@ function PJ.RegisterCategory(category)
 end
 
 function PJ.EntryKey(entry)
-  return entry.kind .. ":" .. (entry.spell or entry.name or entry.minLevel)
+  return entry.kind .. ":" .. (entry.spell or entry.name or entry.map or entry.minLevel)
 end
 
 function PJ.IsFavorite(entry)
@@ -90,15 +106,21 @@ end
 
 local FAVORITES_GROUP = { key = "favorites", name = FAVORITES or "Favorites", order = -1 }
 local OTHER_GROUP = { key = "other", name = "Other", order = math.huge }
+local NODE_GROUPS = {
+  [HERBALISM] = { key = "nodes", name = "Herbs", order = 0 },
+  [MINING] = { key = "nodes", name = "Mineral Veins", order = 0 },
+  [FISHING] = { key = "nodes", name = "Fishing Pools", order = 1 },
+}
 local KIND_GROUPS = {
-  node = { key = "nodes", name = "Gathering Nodes", order = 0 },
   band = { key = "bands", name = "Beasts by Level", order = 0 },
+  water = { key = "waters", name = "Fishing Waters", order = 0 },
 }
 
 local function GroupOf(entry)
   if PJ.IsFavorite(entry) then return FAVORITES_GROUP end
   local category = entry.category and PJ.categories[entry.category]
   if category then return { key = category.id, name = category.name, order = category.order } end
+  if entry.kind == "node" then return NODE_GROUPS[entry.profession] end
   return KIND_GROUPS[entry.kind] or OTHER_GROUP
 end
 
@@ -107,7 +129,7 @@ local function PassesFilters(entry, filters, rank)
   if known and not filters.learned then return false end
   if not known and not filters.unlearned then return false end
   if filters.skillUps then
-    return rank ~= nil and rank >= PJ.RequiredSkill(entry) and rank < entry.grey
+    return rank ~= nil and entry.grey ~= nil and rank >= PJ.RequiredSkill(entry) and rank < entry.grey
   end
   return true
 end
@@ -140,7 +162,11 @@ function PJ.ListFor(profession, query, filters, collapsed)
     local isCollapsed = collapsed[group.header.key] == true
     list[#list + 1] = { header = group.header, collapsed = isCollapsed }
     if not isCollapsed then
-      table.sort(group.entries, function(a, b) return PJ.RequiredSkill(a) < PJ.RequiredSkill(b) end)
+      table.sort(group.entries, function(a, b)
+        if PJ.RequiredSkill(a) ~= PJ.RequiredSkill(b) then return PJ.RequiredSkill(a) < PJ.RequiredSkill(b) end
+        if (a.minLevel or 0) ~= (b.minLevel or 0) then return (a.minLevel or 0) < (b.minLevel or 0) end
+        return PJ.EntryName(a) < PJ.EntryName(b)
+      end)
       for _, entry in ipairs(group.entries) do list[#list + 1] = entry end
     end
   end
@@ -148,7 +174,11 @@ function PJ.ListFor(profession, query, filters, collapsed)
 end
 
 function PJ.RequiredSkill(entry)
-  return entry.skill or entry.yellow
+  return entry.skill or entry.yellow or 0
+end
+
+function PJ.HasLadder(entry)
+  return entry.yellow ~= nil
 end
 
 function PJ.GreenSkill(entry)
@@ -168,6 +198,7 @@ end
 -- window and gathering tooltips color it.
 function PJ.Difficulty(entry, rank)
   if rank < PJ.RequiredSkill(entry) then return "impossible" end
+  if not PJ.HasLadder(entry) then return nil end
   if rank < entry.yellow then return "optimal" end
   if rank < PJ.GreenSkill(entry) then return "medium" end
   if rank < entry.grey then return "easy" end

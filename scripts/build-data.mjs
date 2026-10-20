@@ -93,7 +93,11 @@ const [skillLines, abilities, spellReagents, spellEffects, itemEffects, itemXEff
 
 // Client data has no flag for gathering, so these are named here.
 const GATHERING = new Set([182, 186, 393]);
-const NODE_LISTS = { 182: { list: "herbs", loot: "herbalism" }, 186: { list: "mining-nodes", loot: "mining" } };
+const FISHING = 356;
+const FISHING_POOL_TYPE = 25;
+const MAX_CATCHES = 8;
+const MIN_CATCH_SHARE = 0.02;
+const NODE_LISTS = { 182: { list: "herbs", loot: "herbalism" }, 186: { list: "mineral-veins", loot: "mining" } };
 const SECONDARY_CATEGORY = 9;
 const MAX_YIELDS = 5;
 const MIN_YIELD_CHANCE = 0.005;
@@ -154,7 +158,7 @@ for (const a of abilities) {
     reagents: reagentsBySpell.get(spell),
   });
 }
-const shownProfessions = professions.filter((p) => GATHERING.has(p.id) || recipes.some((r) => r.profession === p.id));
+const shownProfessions = professions.filter((p) => GATHERING.has(p.id) || p.id === FISHING || recipes.some((r) => r.profession === p.id));
 console.log(`${shownProfessions.length} professions, ${recipes.length} recipes, ${recipes.filter((r) => r.recipeItem).length} with recipe items`);
 
 // Listview data is a JavaScript literal that sometimes has bare keys
@@ -191,9 +195,11 @@ function listview(html, id) {
   const start = html.search(new RegExp(`id: ['"]${id}['"]`));
   if (start < 0) return [];
   const next = html.indexOf("new Listview", start);
-  const dataAt = html.indexOf("data: [", start);
+  const dataMatch = /data:\s*\[/.exec(html.slice(start));
+  const dataAt = dataMatch ? start + dataMatch.index : -1;
   if (dataAt < 0 || (next >= 0 && dataAt > next)) return [];
-  const open = dataAt + "data: ".length;
+  const open = dataAt + dataMatch[0].length - 1;
+  const total = Number(/_totalCount:\s*(\d+)/.exec(html.slice(start, dataAt))?.[1]) || undefined;
   let depth = 0, inString = false;
   for (let i = open; i < html.length; i++) {
     const ch = html[i];
@@ -202,7 +208,9 @@ function listview(html, id) {
       else if (ch === '"') inString = false;
     } else if (ch === '"') inString = true;
     else if (ch === "[" || ch === "{") depth++;
-    else if ((ch === "]" || ch === "}") && --depth === 0) return parseJsLiteral(html.slice(open, i + 1));
+    else if ((ch === "]" || ch === "}") && --depth === 0) {
+      return parseJsLiteral(html.slice(open, i + 1)).map((row) => ({ outof: total, ...row }));
+    }
   }
   throw new Error(`unterminated ${id} listview`);
 }
@@ -283,7 +291,7 @@ const uiMapByArea = new Map(uiMapAssignments
 
 const zones = listview(await cachedFetch(`${WOWHEAD}/zones`), "zones")
   .filter((z) => !z.instance && z.minlevel > 0 && uiMapByArea.has(z.id))
-  .map((z) => ({ map: uiMapByArea.get(z.id), minLevel: z.minlevel, maxLevel: z.maxlevel }))
+  .map((z) => ({ area: z.id, map: uiMapByArea.get(z.id), minLevel: z.minlevel, maxLevel: z.maxlevel }))
   .sort((a, b) => a.minLevel - b.minLevel || a.map - b.map);
 
 const round1 = (n) => Math.round(n * 10) / 10;
@@ -322,7 +330,35 @@ for (const [profession, { list, loot }] of Object.entries(NODE_LISTS)) {
     }
   }
 }
-console.log(`${zones.length} zones with levels, ${nodes.length} gathering nodes`);
+// Fishing pools have no list page of their own; they are type 25 in the full object list.
+const pools = new Map();
+for (const object of listview(await cachedFetch(`${WOWHEAD}/objects`), "objects")) {
+  if (object.type !== FISHING_POOL_TYPE) continue;
+  const { spawns, yields } = await nodeDetails(object.id, "fishing");
+  const pool = pools.get(object.name) ?? { profession: FISHING, name: object.name, yields: [], spawns: {} };
+  for (const id of yields) if (!pool.yields.includes(id)) pool.yields.push(id);
+  for (const [map, coords] of Object.entries(spawns)) pool.spawns[map] = (pool.spawns[map] ?? []).concat(coords);
+  pools.set(object.name, pool);
+}
+for (const pool of pools.values()) {
+  if (pool.yields.length && Object.keys(pool.spawns).length) nodes.push({ ...pool, yields: pool.yields.slice(0, MAX_YIELDS) });
+}
+
+// What each zone's open water yields, skipping poor-quality junk. A zone's
+// _totalCount counts every cast, most of them not itemized, so shares are
+// taken against the catches Wowhead did list.
+const waters = [];
+for (const zone of zones) {
+  const listed = listview(await cachedFetch(`${WOWHEAD}/zone=${zone.area}`), "fishing");
+  const totalCaught = listed.reduce((sum, i) => sum + (i.count ?? 0), 0);
+  const catches = listed
+    .filter((i) => itemByID.has(i.id) && num(itemByID.get(i.id).OverallQualityID) > 0 && i.count / totalCaught >= MIN_CATCH_SHARE)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, MAX_CATCHES)
+    .map((i) => i.id);
+  if (catches.length) waters.push({ profession: FISHING, map: zone.map, minLevel: zone.minLevel, maxLevel: zone.maxLevel, yields: catches });
+}
+console.log(`${zones.length} zones with levels, ${nodes.length} gathering nodes and pools, ${waters.length} fishing waters`);
 
 const lua = (value) => {
   if (Array.isArray(value)) return `{ ${value.map(lua).join(", ")} }`;
@@ -345,8 +381,9 @@ const categories = tradeSkillCategories
   .map((c) => ({ id: num(c.ID), name: c.Name_lang, order: num(c.OrderIndex) }))
   .sort((a, b) => a.id - b.id);
 writeData("Categories.lua", "RegisterCategory", categories.map((c) => `  ${lua(c)},`));
-writeData("Zones.lua", "RegisterZone", zones.map((z) => `  ${lua(z)},`));
-nodes.sort((a, b) => a.profession - b.profession || a.skill - b.skill || a.name.localeCompare(b.name));
+writeData("Zones.lua", "RegisterZone", zones.map(({ area, ...z }) => `  ${lua(z)},`));
+writeData("Waters.lua", "RegisterWater", waters.map((w) => `  ${lua(w)},`));
+nodes.sort((a, b) => a.profession - b.profession || (a.skill ?? 0) - (b.skill ?? 0) || a.name.localeCompare(b.name));
 writeData("Nodes.lua", "RegisterNode", nodes.map((n) => `  ${lua(n)},`));
 
 recipes.sort((a, b) => a.profession - b.profession || (a.skill ?? a.yellow) - (b.skill ?? b.yellow) || a.spell - b.spell);

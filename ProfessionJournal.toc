@@ -14,6 +14,7 @@ Data\Categories.lua
 Data\Recipes.lua
 Data\Nodes.lua
 Data\Zones.lua
+Data\Waters.lua
 Data\Skinning.lua
 Map.lua
 AuctionHouse.lua

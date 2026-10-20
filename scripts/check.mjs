@@ -10,7 +10,7 @@ const tocFiles = readFileSync(join(root, "ProfessionJournal.toc"), "utf8")
 
 const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
   entry.isDirectory() ? (entry.name === "node_modules" || entry.name.startsWith(".") ? [] : walk(join(dir, entry.name)))
-    : entry.name.endsWith(".lua") ? [relative(root, join(dir, entry.name)).replaceAll("\\", "/")] : []);
+    : /.(lua|xml)$/.test(entry.name) ? [relative(root, join(dir, entry.name)).replaceAll("\\", "/")] : []);
 const luaFiles = walk(root);
 
 let failed = false;
@@ -22,7 +22,7 @@ for (const file of tocFiles.filter((f) => !luaFiles.includes(f))) {
   console.error(`TOC lists missing file: ${file}`);
   failed = true;
 }
-for (const file of luaFiles) {
+for (const file of luaFiles.filter((f) => f.endsWith(".lua"))) {
   try {
     luaparse.parse(readFileSync(join(root, file), "utf8"), { luaVersion: "5.1" });
   } catch (error) {
@@ -30,5 +30,5 @@ for (const file of luaFiles) {
     failed = true;
   }
 }
-console.log(failed ? "check failed" : `ok: ${luaFiles.length} Lua files parse and match the TOC`);
+console.log(failed ? "check failed" : `ok: ${luaFiles.length} files match the TOC and the Lua parses`);
 process.exit(failed ? 1 : 0);

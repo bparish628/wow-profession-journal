@@ -11,9 +11,14 @@
 Core.lua
 Data\Professions.lua
 Data\Recipes.lua
+Data\Nodes.lua
+Data\Zones.lua
+Data\Skinning.lua
 Map.lua
 AuctionHouse.lua
 TradeSkill.lua
+GatheringPins.lua
+GatheringPins.xml
 MinimapButton.lua
 Settings.lua
 UI\Journal.lua

@@ -1,0 +1,3 @@
+local _, PJ = ...
+
+-- Empty until scripts/build-data.mjs generates it.

@@ -86,9 +86,16 @@ const db2 = async (table) => parseCsv(await cachedFetch(`https://wago.tools/db2/
 const num = (v) => Number(v) || 0;
 console.log(`build ${build}, sources from ${WOWHEAD}`);
 
-const [skillLines, abilities, spellReagents, spellEffects, itemEffects, itemXEffects, items, spellNames, areas, uiMaps] =
-  await Promise.all(["SkillLine", "SkillLineAbility", "SpellReagents", "SpellEffect", "ItemEffect",
-    "ItemXItemEffect", "ItemSparse", "SpellName", "AreaTable", "UiMap"].map(db2));
+const [skillLines, abilities, spellReagents, spellEffects, itemEffects, itemXEffects, items, spellNames, areas, uiMaps,
+  uiMapAssignments] = await Promise.all(["SkillLine", "SkillLineAbility", "SpellReagents", "SpellEffect", "ItemEffect",
+  "ItemXItemEffect", "ItemSparse", "SpellName", "AreaTable", "UiMap", "UiMapAssignment"].map(db2));
+
+// Client data has no flag for gathering, so these are named here.
+const GATHERING = new Set([182, 186, 393]);
+const NODE_LISTS = { 182: { list: "herbs", loot: "herbalism" }, 186: { list: "mining-nodes", loot: "mining" } };
+const SECONDARY_CATEGORY = 9;
+const MAX_YIELDS = 5;
+const MIN_YIELD_CHANCE = 0.005;
 
 // The client marks real professions by giving them child skill lines (one per expansion tier).
 const parentIDs = new Set(skillLines.map((s) => num(s.ParentSkillLineID)).filter(Boolean));
@@ -96,6 +103,7 @@ const professions = skillLines
   .filter((s) => parentIDs.has(num(s.ID)) && !/DNT/.test(s.DisplayName_lang))
   .map((s) => ({
     id: num(s.ID), name: s.DisplayName_lang, icon: num(s.SpellIconFileID),
+    group: GATHERING.has(num(s.ID)) ? "gathering" : num(s.CategoryID) === SECONDARY_CATEGORY ? "secondary" : "crafting",
     tiers: skillLines.filter((c) => num(c.ParentSkillLineID) === num(s.ID)).map((c) => num(c.ID)),
   }));
 const professionIDs = new Set(professions.map((p) => p.id));
@@ -104,6 +112,7 @@ const spellName = new Map(spellNames.map((s) => [num(s.ID), s.Name_lang]));
 const reagentsBySpell = new Map(spellReagents.map((r) => [num(r.SpellID),
   [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ item: num(r[`Reagent_${i}`]), count: num(r[`ReagentCount_${i}`]) }))
     .filter((x) => x.item > 0 && x.count > 0)]));
+const reagentItems = new Set([...reagentsBySpell.values()].flat().map((r) => r.item));
 const createdBy = new Map(spellEffects
   .filter((e) => num(e.Effect) === EFFECT_CREATE_ITEM && num(e.EffectItemType) > 0)
   .map((e) => [num(e.SpellID), num(e.EffectItemType)]));
@@ -143,10 +152,40 @@ for (const a of abilities) {
     reagents: reagentsBySpell.get(spell),
   });
 }
-const craftingProfessions = professions.filter((p) => recipes.some((r) => r.profession === p.id));
-console.log(`${craftingProfessions.length} professions, ${recipes.length} recipes, ${recipes.filter((r) => r.recipeItem).length} with recipe items`);
+const shownProfessions = professions.filter((p) => GATHERING.has(p.id) || recipes.some((r) => r.profession === p.id));
+console.log(`${shownProfessions.length} professions, ${recipes.length} recipes, ${recipes.filter((r) => r.recipeItem).length} with recipe items`);
 
+// Listview data is a JavaScript literal that sometimes has bare keys
+// (`count:22`). Quote them outside strings so JSON.parse can read it, rather
+// than evaluating page text as code.
+function parseJsLiteral(text) {
+  let out = "", inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (ch === "\\") out += text[++i];
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+      out += ch;
+    } else {
+      const bare = /^[A-Za-z_]\w*(?=\s*:)/.exec(text.slice(i, i + 64));
+      if (bare && /[{,]\s*$/.test(out)) {
+        out += `"${bare[0]}"`;
+        i += bare[0].length - 1;
+      } else out += ch;
+    }
+  }
+  return JSON.parse(out);
+}
+
+// Wowhead pages carry their tables either as JSON (list pages) or as
+// `new Listview({ id: ..., data: [...] })` calls (detail pages).
 function listview(html, id) {
+  const json = html.match(/<script type="application\/json" id="data\.page\.listPage\.listviews">(.*?)<\/script>/s);
+  const fromJson = json && JSON.parse(json[1]).find((view) => view.id === id);
+  if (fromJson) return fromJson.data;
   const start = html.search(new RegExp(`id: ['"]${id}['"]`));
   if (start < 0) return [];
   const next = html.indexOf("new Listview", start);
@@ -161,7 +200,7 @@ function listview(html, id) {
       else if (ch === '"') inString = false;
     } else if (ch === '"') inString = true;
     else if (ch === "[" || ch === "{") depth++;
-    else if ((ch === "]" || ch === "}") && --depth === 0) return JSON.parse(html.slice(open, i + 1));
+    else if ((ch === "]" || ch === "}") && --depth === 0) return parseJsLiteral(html.slice(open, i + 1));
   }
   throw new Error(`unterminated ${id} listview`);
 }
@@ -236,22 +275,74 @@ for (const recipe of recipes) {
   if (++done % 100 === 0) console.log(`  sources ${done}/${recipes.length}`);
 }
 
+const uiMapByArea = new Map(uiMapAssignments
+  .filter((a) => uiMapIDs.has(num(a.UiMapID)) && num(a.AreaID))
+  .map((a) => [num(a.AreaID), num(a.UiMapID)]));
+
+const zones = listview(await cachedFetch(`${WOWHEAD}/zones`), "zones")
+  .filter((z) => !z.instance && z.minlevel > 0 && uiMapByArea.has(z.id))
+  .map((z) => ({ map: uiMapByArea.get(z.id), minLevel: z.minlevel, maxLevel: z.maxlevel }))
+  .sort((a, b) => a.minLevel - b.minLevel || a.map - b.map);
+
+const round1 = (n) => Math.round(n * 10) / 10;
+
+async function nodeDetails(objectID, lootID) {
+  const html = await cachedFetch(`${WOWHEAD}/object=${objectID}`);
+  const spawns = {};
+  const mapper = html.match(/g_mapperData = (\{.*?\});/);
+  for (const floor of mapper ? Object.values(JSON.parse(mapper[1])).flat() : []) {
+    if (!uiMapIDs.has(floor.uiMapId)) continue;
+    spawns[floor.uiMapId] = (spawns[floor.uiMapId] ?? []).concat(floor.coords.flatMap(([x, y]) => [round1(x), round1(y)]));
+  }
+  const yields = listview(html, lootID)
+    .filter((i) => itemByID.has(i.id) && i.outof && i.count / i.outof >= MIN_YIELD_CHANCE)
+    .sort((a, b) => b.count / b.outof - a.count / a.outof)
+    .map((i) => i.id);
+  return { spawns, yields };
+}
+
+// Wowhead lists several object IDs for one node name (variants and respawn
+// copies), so nodes merge by name.
+const nodes = [];
+for (const [profession, { list, loot }] of Object.entries(NODE_LISTS)) {
+  const byName = new Map();
+  for (const object of listview(await cachedFetch(`${WOWHEAD}/objects/${list}`), "objects")) {
+    const { spawns, yields } = await nodeDetails(object.id, loot);
+    const node = byName.get(object.name) ?? { profession: Number(profession), name: object.name, skill: object.skill, yields: [], spawns: {} };
+    for (const id of yields) if (!node.yields.includes(id)) node.yields.push(id);
+    for (const [map, coords] of Object.entries(spawns)) node.spawns[map] = (node.spawns[map] ?? []).concat(coords);
+    byName.set(object.name, node);
+  }
+  // Herb and mining lists also hold quest objects; a real node yields a crafting reagent.
+  for (const node of byName.values()) {
+    if (reagentItems.has(node.yields[0]) && Object.keys(node.spawns).length) {
+      nodes.push({ ...node, yields: node.yields.slice(0, MAX_YIELDS) });
+    }
+  }
+}
+console.log(`${zones.length} zones with levels, ${nodes.length} gathering nodes`);
+
 const lua = (value) => {
   if (Array.isArray(value)) return `{ ${value.map(lua).join(", ")} }`;
   if (typeof value === "object") {
-    return `{ ${Object.entries(value).filter(([, v]) => v !== undefined).map(([k, v]) => `${k} = ${lua(v)}`).join(", ")} }`;
+    return `{ ${Object.entries(value).filter(([, v]) => v !== undefined)
+      .map(([k, v]) => `${/^\d+$/.test(k) ? `[${k}]` : k} = ${lua(v)}`).join(", ")} }`;
   }
   return typeof value === "string" ? JSON.stringify(value) : String(value);
 };
 const header = `local _, PJ = ...\n\n-- Generated by scripts/build-data.mjs from WoW Forever build ${build}. Do not edit by hand.\n`;
 
-craftingProfessions.sort((a, b) => a.name.localeCompare(b.name));
-writeFileSync(join(root, "Data", "Professions.lua"),
-  `${header}for _, profession in ipairs({\n${craftingProfessions.map((p) => `  ${lua(p)},`).join("\n")}\n}) do\n  PJ.RegisterProfession(profession)\nend\n`);
+const writeData = (file, register, rows) => writeFileSync(join(root, "Data", file),
+  `${header}for _, entry in ipairs({\n${rows.join("\n")}\n}) do\n  PJ.${register}(entry)\nend\n`);
+
+shownProfessions.sort((a, b) => a.name.localeCompare(b.name));
+writeData("Professions.lua", "RegisterProfession", shownProfessions.map((p) => `  ${lua(p)},`));
+writeData("Zones.lua", "RegisterZone", zones.map((z) => `  ${lua(z)},`));
+nodes.sort((a, b) => a.profession - b.profession || a.skill - b.skill || a.name.localeCompare(b.name));
+writeData("Nodes.lua", "RegisterNode", nodes.map((n) => `  ${lua(n)},`));
 
 recipes.sort((a, b) => a.profession - b.profession || (a.skill ?? a.yellow) - (b.skill ?? b.yellow) || a.spell - b.spell);
-writeFileSync(join(root, "Data", "Recipes.lua"),
-  `${header}for _, recipe in ipairs({\n${recipes.map(({ name, ...r }) => `  ${lua(r)}, -- ${name}`).join("\n")}\n}) do\n  PJ.RegisterRecipe(recipe)\nend\n`);
+writeData("Recipes.lua", "RegisterRecipe", recipes.map(({ name, ...r }) => `  ${lua(r)}, -- ${name}`));
 
 const withSources = recipes.filter((r) => r.sources.length).length;
 const pinned = recipes.filter((r) => r.sources.some((s) => s.map)).length;

@@ -22,7 +22,7 @@ local DIFFICULTY_COLORS = {
   trivial = CreateColor(0.5, 0.5, 0.5),
 }
 
-local journal, selectedProfession, selectedRecipe
+local journal, selectedProfession, selectedEntry
 
 local function ShowTextTooltip(owner, text)
   GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
@@ -51,9 +51,16 @@ local function HandleLinkClick(link)
   return IsModifiedClick() and link ~= nil and HandleModifiedItemClick(link)
 end
 
-local function RecipeLink(recipe)
-  if recipe.creates then return select(2, C_Item.GetItemInfo(recipe.creates)) end
-  return C_Spell.GetSpellLink(recipe.spell)
+-- The item an entry is best represented by: what a recipe makes, or the main
+-- thing a gathering entry yields. Enchants make no item.
+local function EntryItem(entry)
+  return entry.creates or (entry.yields and entry.yields[1])
+end
+
+local function EntryLink(entry)
+  local itemID = EntryItem(entry)
+  if itemID then return select(2, C_Item.GetItemInfo(itemID)) end
+  return C_Spell.GetSpellLink(entry.spell)
 end
 
 local function SetQualityBorder(border, itemID)
@@ -71,6 +78,7 @@ local function CreateSectionHeader(parent, text)
   divider:SetHeight(8)
   divider:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -1)
   divider:SetPoint("RIGHT", parent, "RIGHT")
+  header.Divider = divider
   return header
 end
 
@@ -172,61 +180,133 @@ local function SkillText(recipe)
     .. DIFFICULTY_COLORS.trivial:WrapTextInColorCode(recipe.grey)
 end
 
-local function RenderDetail()
-  local detail = journal.Detail
-  detail.sourceRows:ReleaseAll()
-  detail.slots:ReleaseAll()
-  local recipe = selectedRecipe
-  detail:SetShown(recipe ~= nil)
-  if not recipe then return end
+local function ZoneName(mapID)
+  local info = C_Map.GetMapInfo(mapID)
+  return info and info.name or ("Map " .. mapID)
+end
 
-  detail.Icon:SetTexture(PJ.RecipeIcon(recipe))
-  if recipe.creates then SetQualityBorder(detail.IconBorder, recipe.creates) else detail.IconBorder:Hide() end
-  detail.Name:SetText(recipe.creates and ItemName(recipe.creates) or PJ.RecipeName(recipe))
-  local status = PJ.IsKnown(recipe) and GREEN_FONT_COLOR:WrapTextInColorCode("Known")
-    or GRAY_FONT_COLOR:WrapTextInColorCode("Not learned")
-  detail.Skill:SetText(SkillText(recipe) .. "   " .. status)
+local function SetZoneRow(row, text, onClick, tooltip)
+  row.Icon:SetTexture("Interface\\Icons\\INV_Misc_Map_01")
+  row.Text:SetText(text)
+  row:SetScript("OnClick", onClick)
+  row:SetScript("OnEnter", function(self) ShowTextTooltip(self, tooltip) end)
+end
 
+-- Lays out the detail pane top to bottom: the first section header, its rows,
+-- then the second header and a grid of item slots.
+local function CreateLayout(detail)
   local anchor, anchorGap = detail.SourcesHeader, 12
-  local function Place(region, gap)
-    region:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -(gap or anchorGap))
-    region:SetPoint("RIGHT", detail, "RIGHT", -4, 0)
-    region:Show()
-    anchor, anchorGap = region, 2
+  local layout = {}
+
+  function layout.Row()
+    local row = detail.sourceRows:Acquire()
+    row:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -anchorGap)
+    row:SetPoint("RIGHT", detail, "RIGHT", -4, 0)
+    row:Show()
+    anchor, anchorGap = row, 2
+    return row
   end
 
-  if recipe.recipeItem then
+  function layout.Text(fontString, text)
+    fontString:SetText(text)
+    fontString:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -6)
+    fontString:SetPoint("RIGHT", detail, "RIGHT", -4, 0)
+    fontString:Show()
+    anchor, anchorGap = fontString, 4
+  end
+
+  function layout.Slot(itemID, count)
     local slot = detail.slots:Acquire()
-    SetItemSlot(slot, recipe.recipeItem)
+    SetItemSlot(slot, itemID, count)
     slot:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -anchorGap)
     slot:Show()
     anchor, anchorGap = slot, 4
   end
 
-  local blizzardText = PJ.BlizzardSourceText(recipe)
-  local sources = recipe.sources
-  if #sources == 0 and not blizzardText then sources = { UNKNOWN_SOURCE } end
-  for _, source in ipairs(sources) do
-    local row = detail.sourceRows:Acquire()
-    SetSourceRow(row, source)
-    Place(row)
+  function layout.Grid(title, items)
+    detail.ReagentsHeader:SetText(title)
+    detail.ReagentsHeader:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -18)
+    detail.ReagentsHeader:Show()
+    detail.ReagentsHeader.Divider:Show()
+    for i, item in ipairs(items) do
+      local slot = detail.slots:Acquire()
+      SetItemSlot(slot, item.item, item.count)
+      local column, line = (i - 1) % 2, math.floor((i - 1) / 2)
+      slot:SetPoint("TOPLEFT", detail.ReagentsHeader, "BOTTOMLEFT", column * (SLOT_WIDTH + 12), -12 - line * SLOT_HEIGHT)
+      slot:Show()
+    end
   end
 
-  detail.BlizzardSource:SetShown(blizzardText ~= nil)
-  if blizzardText then
-    detail.BlizzardSource:SetText(blizzardText)
-    Place(detail.BlizzardSource, 6)
-  end
+  return layout
+end
 
+local function Yields(entry)
+  local items = {}
+  for i, itemID in ipairs(entry.yields) do items[i] = { item = itemID } end
+  return items
+end
+
+local BODIES = {
+  recipe = function(layout, recipe)
+    if recipe.recipeItem then layout.Slot(recipe.recipeItem) end
+    local blizzardText = PJ.BlizzardSourceText(recipe)
+    local sources = recipe.sources
+    if #sources == 0 and not blizzardText then sources = { UNKNOWN_SOURCE } end
+    for _, source in ipairs(sources) do SetSourceRow(layout.Row(), source) end
+    if blizzardText then layout.Text(journal.Detail.Note, blizzardText) end
+    layout.Grid("Reagents", recipe.reagents)
+  end,
+
+  node = function(layout, node)
+    local maps = {}
+    for mapID, coords in pairs(node.spawns) do maps[#maps + 1] = { id = mapID, count = #coords / 2 } end
+    table.sort(maps, function(a, b) return a.count > b.count end)
+    if #maps == 0 then layout.Text(journal.Detail.Note, "No known spawn locations.") end
+    for _, map in ipairs(maps) do
+      SetZoneRow(layout.Row(), ("%s |cffffffff(%d)|r"):format(ZoneName(map.id), map.count),
+        function() PJ.ShowNodeOnMap(node, map.id) end,
+        ("Click to pin all %d spawns on the world map"):format(map.count))
+    end
+    layout.Grid("Yields", Yields(node))
+  end,
+
+  band = function(layout, band)
+    layout.Text(journal.Detail.Note, ("Skinning a level %d beast needs %d skill. Up to level 20 that is (level - 10) x 10, above it level x 5.")
+      :format(band.maxLevel, band.skill))
+    for _, zone in ipairs(PJ.ZonesForLevels(band.minLevel, band.maxLevel)) do
+      SetZoneRow(layout.Row(), ("%s |cffffffff(%d-%d)|r"):format(ZoneName(zone.map), zone.minLevel, zone.maxLevel),
+        function() OpenWorldMap(zone.map) end, "Click to open the world map")
+    end
+    layout.Grid("Yields", Yields(band))
+  end,
+}
+
+local SECTION_TITLES = { recipe = "Sources", node = "Found in", band = "Zones" }
+
+local function RenderDetail()
+  local detail = journal.Detail
+  detail.sourceRows:ReleaseAll()
+  detail.slots:ReleaseAll()
+  detail.Note:Hide()
+  detail.ReagentsHeader:Hide()
+  detail.ReagentsHeader.Divider:Hide()
   detail.ReagentsHeader:ClearAllPoints()
-  detail.ReagentsHeader:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -18)
-  for i, reagent in ipairs(recipe.reagents) do
-    local slot = detail.slots:Acquire()
-    SetItemSlot(slot, reagent.item, reagent.count)
-    local column, line = (i - 1) % 2, math.floor((i - 1) / 2)
-    slot:SetPoint("TOPLEFT", detail.ReagentsHeader, "BOTTOMLEFT", column * (SLOT_WIDTH + 12), -12 - line * SLOT_HEIGHT)
-    slot:Show()
+  local entry = selectedEntry
+  detail:SetShown(entry ~= nil)
+  if not entry then return end
+
+  detail.Icon:SetTexture(PJ.EntryIcon(entry))
+  if entry.creates then SetQualityBorder(detail.IconBorder, entry.creates) else detail.IconBorder:Hide() end
+  detail.Name:SetText(entry.creates and ItemName(entry.creates) or PJ.EntryName(entry))
+  local status = ""
+  if entry.kind == "recipe" then
+    status = "   " .. (PJ.IsKnown(entry) and GREEN_FONT_COLOR:WrapTextInColorCode("Known")
+      or GRAY_FONT_COLOR:WrapTextInColorCode("Not learned"))
   end
+  detail.Skill:SetText(SkillText(entry) .. status)
+  detail.SourcesHeader:SetText(SECTION_TITLES[entry.kind])
+
+  BODIES[entry.kind](CreateLayout(detail), entry)
   detail.AuctionHint:SetText(PJ.IsAuctionHouseOpen()
     and "Click an item to search the auction house. Shift-click to link it."
     or "Shift-click an item to link it. Open the auction house to search for it.")
@@ -242,7 +322,7 @@ local function RenderRank()
 end
 
 local function RenderList()
-  local recipes = PJ.RecipesFor(selectedProfession.id, journal.SearchBox:GetText())
+  local recipes = PJ.EntriesFor(selectedProfession.id, journal.SearchBox:GetText())
   journal.ScrollBox:SetDataProvider(CreateDataProvider(recipes), ScrollBoxConstants.RetainScrollPosition)
   journal:SetTitle(("Profession Journal - %s"):format(selectedProfession.name))
   journal:SetPortraitToAsset(selectedProfession.icon)
@@ -254,18 +334,18 @@ end
 
 local function SelectProfession(profession)
   selectedProfession = profession
-  selectedRecipe = nil
+  selectedEntry = nil
   RenderList()
   RenderDetail()
 end
 
-local function SelectRecipe(recipe)
-  selectedRecipe = recipe
-  journal.ScrollBox:ForEachFrame(function(row) row.Selected:SetShown(row:GetElementData() == recipe) end)
+local function SelectEntry(entry)
+  selectedEntry = entry
+  journal.ScrollBox:ForEachFrame(function(row) row.Selected:SetShown(row:GetElementData() == entry) end)
   RenderDetail()
 end
 
-local function InitRecipeRow(row, recipe)
+local function InitEntryRow(row, entry)
   if not row.Icon then
     row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
     row.Selected = row:CreateTexture(nil, "BACKGROUND")
@@ -284,27 +364,29 @@ local function InitRecipeRow(row, recipe)
     row.Sub:SetPoint("BOTTOMLEFT", row.Icon, "BOTTOMRIGHT", 8, 1)
     row:SetScript("OnClick", function(self)
       local data = self:GetElementData()
-      if not HandleLinkClick(RecipeLink(data)) then SelectRecipe(data) end
+      if not HandleLinkClick(EntryLink(data)) then SelectEntry(data) end
     end)
   end
   local rank = PJ.PlayerSkill(selectedProfession)
-  local color = rank and DIFFICULTY_COLORS[PJ.Difficulty(recipe, rank)] or NORMAL_FONT_COLOR
-  row.Icon:SetTexture(PJ.RecipeIcon(recipe))
-  row.Icon:SetDesaturated(not PJ.IsKnown(recipe))
-  row.Name:SetText(PJ.RecipeName(recipe))
+  local color = rank and DIFFICULTY_COLORS[PJ.Difficulty(entry, rank)] or NORMAL_FONT_COLOR
+  row.Icon:SetTexture(PJ.EntryIcon(entry))
+  row.Icon:SetDesaturated(not PJ.IsKnown(entry))
+  row.Name:SetText(PJ.EntryName(entry))
   row.Name:SetTextColor(color:GetRGB())
-  row.Sub:SetText(PJ.IsKnown(recipe) and ("Skill %d"):format(PJ.RequiredSkill(recipe))
-    or ("Skill %d  -  not learned"):format(PJ.RequiredSkill(recipe)))
-  row.Selected:SetShown(recipe == selectedRecipe)
+  row.Sub:SetText(PJ.IsKnown(entry) and ("Skill %d"):format(PJ.RequiredSkill(entry))
+    or ("Skill %d  -  not learned"):format(PJ.RequiredSkill(entry)))
+  row.Selected:SetShown(entry == selectedEntry)
 end
 
-local function CreateProfessionTab(frame, profession, index)
+local function CreateProfessionTab(frame, profession, offset)
   local tab = CreateFrame("CheckButton", nil, frame)
   tab:SetSize(32, 32)
-  tab:SetPoint("TOPLEFT", frame, "TOPRIGHT", 0, -40 - (index - 1) * 44)
+  tab:SetPoint("TOPLEFT", frame, "TOPRIGHT", 0, -40 - offset)
   tab:SetNormalTexture(profession.icon)
-  tab:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-  tab:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight", "ADD")
+  tab:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
+  tab:GetHighlightTexture():SetBlendMode("ADD")
+  tab:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight")
+  tab:GetCheckedTexture():SetBlendMode("ADD")
   local border = tab:CreateTexture(nil, "BACKGROUND")
   border:SetTexture("Interface\\SpellBook\\SpellBook-SkillLineTab")
   border:SetSize(64, 64)
@@ -344,15 +426,16 @@ local function CreateDetail(frame)
   iconButton:SetPoint("TOPLEFT")
   iconButton:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    if selectedRecipe.creates then
-      GameTooltip:SetItemByID(selectedRecipe.creates)
+    local itemID = EntryItem(selectedEntry)
+    if itemID then
+      GameTooltip:SetItemByID(itemID)
     else
-      GameTooltip:SetSpellByID(selectedRecipe.spell)
+      GameTooltip:SetSpellByID(selectedEntry.spell)
     end
     GameTooltip:Show()
   end)
   iconButton:SetScript("OnLeave", GameTooltip_Hide)
-  iconButton:SetScript("OnClick", function() HandleLinkClick(RecipeLink(selectedRecipe)) end)
+  iconButton:SetScript("OnClick", function() HandleLinkClick(EntryLink(selectedEntry)) end)
   detail.Icon = iconButton:CreateTexture(nil, "ARTWORK")
   detail.Icon:SetAllPoints()
   detail.IconBorder = iconButton:CreateTexture(nil, "OVERLAY")
@@ -367,9 +450,9 @@ local function CreateDetail(frame)
   detail.Skill:SetPoint("BOTTOMLEFT", iconButton, "BOTTOMRIGHT", 10, 3)
   detail.SourcesHeader = CreateSectionHeader(detail, "Sources")
   detail.SourcesHeader:SetPoint("TOPLEFT", iconButton, "BOTTOMLEFT", 0, -16)
-  detail.BlizzardSource = detail:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-  detail.BlizzardSource:SetJustifyH("LEFT")
-  detail.BlizzardSource:SetSpacing(2)
+  detail.Note = detail:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+  detail.Note:SetJustifyH("LEFT")
+  detail.Note:SetSpacing(2)
   detail.ReagentsHeader = CreateSectionHeader(detail, "Reagents")
   detail.AuctionHint = detail:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
   detail.AuctionHint:SetPoint("BOTTOMLEFT")
@@ -395,8 +478,17 @@ local function CreateJournal()
   tinsert(UISpecialFrames, frame:GetName())
 
   frame.Tabs = {}
-  for i, profession in ipairs(PJ.professions) do
-    frame.Tabs[i] = CreateProfessionTab(frame, profession, i)
+  local offset = 0
+  for _, group in ipairs(PJ.GROUPS) do
+    local placed = false
+    for _, profession in ipairs(PJ.professions) do
+      if profession.group == group then
+        frame.Tabs[#frame.Tabs + 1] = CreateProfessionTab(frame, profession, offset)
+        offset = offset + 44
+        placed = true
+      end
+    end
+    if placed then offset = offset + 16 end
   end
 
   frame.RankBar = CreateRankBar(frame)
@@ -416,7 +508,7 @@ local function CreateJournal()
   scrollBar:SetPoint("BOTTOMLEFT", scrollBox, "BOTTOMRIGHT", 6, 2)
   local view = CreateScrollBoxListLinearView()
   view:SetElementExtent(ROW_HEIGHT)
-  view:SetElementInitializer("Button", InitRecipeRow)
+  view:SetElementInitializer("Button", InitEntryRow)
   ScrollUtil.InitScrollBoxListWithScrollBar(scrollBox, scrollBar, view)
   frame.ScrollBox = scrollBox
 

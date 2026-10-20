@@ -1,0 +1,13 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+  <Frame name="ProfessionJournalNodePinTemplate" inherits="MapCanvasPinTemplate" mixin="ProfessionJournalNodePinMixin" virtual="true">
+    <Size x="14" y="14"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Icon" setAllPoints="true"/>
+      </Layer>
+      <Layer level="OVERLAY">
+        <Texture file="Interface\Common\WhiteIconFrame" setAllPoints="true"/>
+      </Layer>
+    </Layers>
+  </Frame>
+</Ui>

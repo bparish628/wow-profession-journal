@@ -2,7 +2,10 @@
 // Recipes, reagents, and skill ranks come from the Forever client's DB2 tables (wago.tools).
 // Where a recipe comes from (drops, vendors, quests) is not in client data, so it comes from Wowhead.
 //
-//   node scripts/build-data.mjs [--build=1.60.1.70245] [--wowhead=classic]
+//   node scripts/build-data.mjs [--build=1.60.1.70245] [--wowhead=classic|forever|none]
+//
+// --wowhead=none builds from Blizzard data alone: no recipe drop sources,
+// gathering nodes, zone levels, or fishing waters.
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -14,6 +17,7 @@ const cacheDir = join(root, ".cache");
 mkdirSync(cacheDir, { recursive: true });
 
 const WOWHEAD = `https://www.wowhead.com/${args.wowhead ?? "classic"}`;
+const USE_WOWHEAD = args.wowhead !== "none";
 const MAX_DROPPERS = 6;
 const MAX_VENDORS = 4;
 const MAX_QUESTS = 3;
@@ -42,11 +46,14 @@ async function cachedFetch(url) {
       writeFileSync(file, "");
       return "";
     }
-    if (res.ok) {
-      const body = await res.text();
+    const body = await res.text();
+    if (res.status === 200 && body.length > 0) {
       writeFileSync(file, body);
       return body;
     }
+    // Wowhead answers clients it treats as bots with an empty 202. Caching that
+    // would record every page as having no data, so stop instead.
+    if (res.status === 202) throw new Error(`${url} answered 202 with ${body.length} bytes: a bot check, not a page`);
     const wait = throttled ? BLOCKED_WAIT_MS : 5000;
     console.warn(`${res.status} ${url}, retrying in ${wait / 1000}s`);
     await sleep(wait);
@@ -153,12 +160,15 @@ for (const a of abilities) {
   const profession = num(a.SkillLine);
   const name = spellName.get(spell) ?? "";
   if (!professionIDs.has(profession) || !reagentsBySpell.has(spell) || seen.has(spell)) continue;
-  if (/DNT|^zz|^Test /i.test(name) || seasonOfDiscovery.has(num(a.TradeSkillCategoryID))) continue;
+  // Blizzard's profession window lists recipes by category, so one without a
+  // category is a leftover (e.g. classic Basic Campfire beside Forever's).
+  const category = num(a.TradeSkillCategoryID);
+  if (/DNT|^zz|^Test /i.test(name) || !category || seasonOfDiscovery.has(category)) continue;
   seen.add(spell);
   const recipeItem = recipeItemBySpell.get(spell);
   recipes.push({
     spell, profession, name,
-    category: num(a.TradeSkillCategoryID) || undefined,
+    category,
     forever: eraSpells.has(spell) ? undefined : true,
     skill: recipeItem ? num(itemByID.get(recipeItem).RequiredSkillRank) || undefined : undefined,
     yellow: num(a.TrivialSkillLineRankLow),
@@ -290,6 +300,10 @@ async function learnedAt(recipe) {
 
 let done = 0;
 for (const recipe of recipes) {
+  if (!USE_WOWHEAD) {
+    recipe.sources = recipe.recipeItem ? [] : [{ kind: "trainer" }];
+    continue;
+  }
   recipe.sources = await sourcesFor(recipe);
   recipe.skill ??= await learnedAt(recipe);
   if (++done % 100 === 0) console.log(`  sources ${done}/${recipes.length}`);
@@ -299,7 +313,7 @@ const uiMapByArea = new Map(uiMapAssignments
   .filter((a) => uiMapIDs.has(num(a.UiMapID)) && num(a.AreaID))
   .map((a) => [num(a.AreaID), num(a.UiMapID)]));
 
-const zones = listview(await cachedFetch(`${WOWHEAD}/zones`), "zones")
+const zones = (USE_WOWHEAD ? listview(await cachedFetch(`${WOWHEAD}/zones`), "zones") : [])
   .filter((z) => !z.instance && z.minlevel > 0 && uiMapByArea.has(z.id))
   .map((z) => ({ area: z.id, map: uiMapByArea.get(z.id), minLevel: z.minlevel, maxLevel: z.maxlevel }))
   .sort((a, b) => a.minLevel - b.minLevel || a.map - b.map);
@@ -324,7 +338,7 @@ async function nodeDetails(objectID, lootID) {
 // Wowhead lists several object IDs for one node name (variants and respawn
 // copies), so nodes merge by name.
 const nodes = [];
-for (const [profession, { list, loot }] of Object.entries(NODE_LISTS)) {
+for (const [profession, { list, loot }] of USE_WOWHEAD ? Object.entries(NODE_LISTS) : []) {
   const byName = new Map();
   for (const object of listview(await cachedFetch(`${WOWHEAD}/objects/${list}`), "objects")) {
     const { spawns, yields } = await nodeDetails(object.id, loot);
@@ -342,7 +356,7 @@ for (const [profession, { list, loot }] of Object.entries(NODE_LISTS)) {
 }
 // Fishing pools have no list page of their own; they are type 25 in the full object list.
 const pools = new Map();
-for (const object of listview(await cachedFetch(`${WOWHEAD}/objects`), "objects")) {
+for (const object of USE_WOWHEAD ? listview(await cachedFetch(`${WOWHEAD}/objects`), "objects") : []) {
   if (object.type !== FISHING_POOL_TYPE) continue;
   const { spawns, yields } = await nodeDetails(object.id, "fishing");
   const pool = pools.get(object.name) ?? { profession: FISHING, name: object.name, yields: [], spawns: {} };

@@ -30,6 +30,7 @@ Copy this repository into `World of Warcraft/_classic_beta_/Interface/AddOns/Pro
 npm install
 npm run data                           # latest Forever build
 npm run data -- --build=1.60.1.70245   # a specific build
+npm run data -- --wowhead=none         # Blizzard data only, no Wowhead sources
 ```
 
 The generator reads two sources:

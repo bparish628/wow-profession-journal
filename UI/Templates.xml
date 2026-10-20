@@ -1,0 +1,31 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+  <Button name="ProfessionJournalHeaderTemplate" inherits="ListHeaderVisualTemplate" virtual="true">
+    <Size y="25"/>
+  </Button>
+
+  <Button name="ProfessionJournalEntryTemplate" virtual="true">
+    <Size y="20"/>
+    <Layers>
+      <Layer level="BACKGROUND">
+        <Texture parentKey="Selected" atlas="Professions_Recipe_Active" hidden="true" setAllPoints="true"/>
+      </Layer>
+      <Layer level="ARTWORK">
+        <Texture parentKey="SkillUp">
+          <Size x="16" y="16"/>
+          <Anchors>
+            <Anchor point="LEFT" x="8" y="0"/>
+          </Anchors>
+        </Texture>
+        <FontString parentKey="Label" inherits="GameFontHighlight_NoShadow" justifyH="LEFT" wordwrap="false">
+          <Anchors>
+            <Anchor point="LEFT" x="30" y="0"/>
+            <Anchor point="RIGHT" x="-8" y="0"/>
+          </Anchors>
+        </FontString>
+      </Layer>
+      <Layer level="HIGHLIGHT">
+        <Texture atlas="Professions_Recipe_Hover" alpha="0.5" setAllPoints="true"/>
+      </Layer>
+    </Layers>
+  </Button>
+</Ui>

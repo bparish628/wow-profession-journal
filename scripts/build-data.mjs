@@ -87,8 +87,9 @@ const num = (v) => Number(v) || 0;
 console.log(`build ${build}, sources from ${WOWHEAD}`);
 
 const [skillLines, abilities, spellReagents, spellEffects, itemEffects, itemXEffects, items, spellNames, areas, uiMaps,
-  uiMapAssignments] = await Promise.all(["SkillLine", "SkillLineAbility", "SpellReagents", "SpellEffect", "ItemEffect",
-  "ItemXItemEffect", "ItemSparse", "SpellName", "AreaTable", "UiMap", "UiMapAssignment"].map(db2));
+  uiMapAssignments, tradeSkillCategories] = await Promise.all(["SkillLine", "SkillLineAbility", "SpellReagents",
+  "SpellEffect", "ItemEffect", "ItemXItemEffect", "ItemSparse", "SpellName", "AreaTable", "UiMap", "UiMapAssignment",
+  "TradeSkillCategory"].map(db2));
 
 // Client data has no flag for gathering, so these are named here.
 const GATHERING = new Set([182, 186, 393]);
@@ -144,6 +145,7 @@ for (const a of abilities) {
   const recipeItem = recipeItemBySpell.get(spell);
   recipes.push({
     spell, profession, name,
+    category: num(a.TradeSkillCategoryID) || undefined,
     skill: recipeItem ? num(itemByID.get(recipeItem).RequiredSkillRank) || undefined : undefined,
     yellow: num(a.TrivialSkillLineRankLow),
     grey: num(a.TrivialSkillLineRankHigh),
@@ -337,6 +339,12 @@ const writeData = (file, register, rows) => writeFileSync(join(root, "Data", fil
 
 shownProfessions.sort((a, b) => a.name.localeCompare(b.name));
 writeData("Professions.lua", "RegisterProfession", shownProfessions.map((p) => `  ${lua(p)},`));
+const usedCategories = new Set(recipes.map((r) => r.category));
+const categories = tradeSkillCategories
+  .filter((c) => usedCategories.has(num(c.ID)))
+  .map((c) => ({ id: num(c.ID), name: c.Name_lang, order: num(c.OrderIndex) }))
+  .sort((a, b) => a.id - b.id);
+writeData("Categories.lua", "RegisterCategory", categories.map((c) => `  ${lua(c)},`));
 writeData("Zones.lua", "RegisterZone", zones.map((z) => `  ${lua(z)},`));
 nodes.sort((a, b) => a.profession - b.profession || a.skill - b.skill || a.name.localeCompare(b.name));
 writeData("Nodes.lua", "RegisterNode", nodes.map((n) => `  ${lua(n)},`));

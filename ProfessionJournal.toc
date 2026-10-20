@@ -10,6 +10,7 @@
 
 Core.lua
 Data\Professions.lua
+Data\Categories.lua
 Data\Recipes.lua
 Data\Nodes.lua
 Data\Zones.lua
@@ -21,4 +22,5 @@ GatheringPins.lua
 GatheringPins.xml
 MinimapButton.lua
 Settings.lua
+UI\Templates.xml
 UI\Journal.lua

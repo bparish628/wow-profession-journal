@@ -90,7 +90,7 @@ console.log(`build ${build}, sources from ${WOWHEAD}`);
 const [skillLines, abilities, spellReagents, spellEffects, itemEffects, itemXEffects, items, spellNames, areas, uiMaps,
   uiMapAssignments, tradeSkillCategories] = await Promise.all(["SkillLine", "SkillLineAbility", "SpellReagents",
   "SpellEffect", "ItemEffect", "ItemXItemEffect", "ItemSparse", "SpellName", "AreaTable", "UiMap", "UiMapAssignment",
-  "TradeSkillCategory"].map(db2));
+  "TradeSkillCategory"].map((table) => db2(table)));
 
 // Client data has no flag for gathering, so these are named here.
 const GATHERING = new Set([182, 186, 393]);

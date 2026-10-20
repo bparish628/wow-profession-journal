@@ -74,12 +74,21 @@ events:SetScript("OnEvent", function(_, _, loaded)
   ProfessionJournalDB = ProfessionJournalDB or {}
   PJ.db = ProfessionJournalDB
   PJ.db.sourceText = PJ.db.sourceText or {}
+  PJ.db.minimap = PJ.db.minimap or { show = true, angle = 225 }
+  PJ.CreateMinimapButton()
+  PJ.RegisterSettings()
   events:UnregisterEvent("ADDON_LOADED")
 end)
 
 SLASH_PROFESSIONJOURNAL1 = "/pj"
 SLASH_PROFESSIONJOURNAL2 = "/professionjournal"
-SlashCmdList.PROFESSIONJOURNAL = function() PJ.ToggleJournal() end
+SlashCmdList.PROFESSIONJOURNAL = function(input)
+  if input:lower():match("^%s*options") then
+    PJ.OpenSettings()
+  else
+    PJ.ToggleJournal()
+  end
+end
 
 function ProfessionJournal_OnAddonCompartmentClick()
   PJ.ToggleJournal()

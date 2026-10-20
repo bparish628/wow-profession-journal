@@ -14,4 +14,6 @@ Data\Recipes.lua
 Map.lua
 AuctionHouse.lua
 TradeSkill.lua
+MinimapButton.lua
+Settings.lua
 UI\Journal.lua

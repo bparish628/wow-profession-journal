@@ -12,11 +12,11 @@ A World of Warcraft: Forever addon that puts every profession and recipe in one 
 - With the auction house open, click a reagent or recipe item to search for it. Shift-click any item or recipe to link it in chat.
 - Opening a profession window caches Blizzard's own source text for its unlearned recipes, which fills in recipes the generated data has no source for.
 
-Open the journal with `/pj`, or from the addon compartment button on the minimap.
+Open the journal with `/pj`, the minimap button, or the addon compartment. Right-click the minimap button or type `/pj options` to open the settings, where the minimap button can be turned off.
 
 ## Status
 
-The UI, map pins, and auction house search are in place, and the recipe database is generated from the Forever client's own data. Nothing has been tested in the Forever client yet.
+The UI, map pins, and auction house search are in place, and the recipe database is generated from the Forever client's own data. The journal loads and renders in the Forever beta (build 1.60.1.70450).
 
 ## Install
 

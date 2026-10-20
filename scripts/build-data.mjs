@@ -82,7 +82,8 @@ async function latestForeverBuild() {
 }
 
 const build = args.build ?? await latestForeverBuild();
-const db2 = async (table) => parseCsv(await cachedFetch(`https://wago.tools/db2/${table}/csv?build=${build}`));
+const db2 = async (table, forBuild = build) => parseCsv(await cachedFetch(`https://wago.tools/db2/${table}/csv?build=${forBuild}`));
+const latestBuild = async (product) => JSON.parse(await (await fetch("https://wago.tools/api/builds")).text())[product][0].version;
 const num = (v) => Number(v) || 0;
 console.log(`build ${build}, sources from ${WOWHEAD}`);
 
@@ -135,6 +136,14 @@ for (const e of itemEffects) {
   if (candidates.length && !recipeItemBySpell.has(num(e.SpellID))) recipeItemBySpell.set(num(e.SpellID), candidates[0]);
 }
 const areaIDs = new Set(areas.map((a) => num(a.ID)));
+
+// The Forever client also ships Season of Discovery recipes, which Blizzard
+// files under categories named "SEASON OF DISCOVERY". Recipes absent from the
+// Classic Era client are new in Forever.
+const seasonOfDiscovery = new Set(tradeSkillCategories
+  .filter((c) => c.Name_lang === "SEASON OF DISCOVERY").map((c) => num(c.ID)));
+const eraBuild = args.era ?? await latestBuild("wow_classic_era");
+const eraSpells = new Set((await db2("SkillLineAbility", eraBuild)).map((a) => num(a.Spell)));
 const uiMapIDs = new Set(uiMaps.map((m) => num(m.ID)));
 
 const recipes = [];
@@ -144,12 +153,13 @@ for (const a of abilities) {
   const profession = num(a.SkillLine);
   const name = spellName.get(spell) ?? "";
   if (!professionIDs.has(profession) || !reagentsBySpell.has(spell) || seen.has(spell)) continue;
-  if (/DNT|^zz|^Test /i.test(name)) continue;
+  if (/DNT|^zz|^Test /i.test(name) || seasonOfDiscovery.has(num(a.TradeSkillCategoryID))) continue;
   seen.add(spell);
   const recipeItem = recipeItemBySpell.get(spell);
   recipes.push({
     spell, profession, name,
     category: num(a.TradeSkillCategoryID) || undefined,
+    forever: eraSpells.has(spell) ? undefined : true,
     skill: recipeItem ? num(itemByID.get(recipeItem).RequiredSkillRank) || undefined : undefined,
     yellow: num(a.TrivialSkillLineRankLow),
     grey: num(a.TrivialSkillLineRankHigh),

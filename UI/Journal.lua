@@ -314,6 +314,7 @@ local function RenderDetail()
   if entry.kind == "recipe" then
     status = "   " .. (PJ.IsKnown(entry) and GREEN_FONT_COLOR:WrapTextInColorCode("Known")
       or GRAY_FONT_COLOR:WrapTextInColorCode("Not learned"))
+    if entry.forever then status = status .. "   " .. EPIC_PURPLE_COLOR:WrapTextInColorCode("New in Forever") end
   end
   detail.Skill:SetText(SkillText(entry) .. status)
   detail.Favorite:SetNormalAtlas(PJ.IsFavorite(entry) and "auctionhouse-icon-favorite" or "auctionhouse-icon-favorite-off")

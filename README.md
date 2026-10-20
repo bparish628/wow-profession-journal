@@ -16,7 +16,7 @@ Open the journal with `/pj`, the minimap button, or the addon compartment. Right
 
 ## Status
 
-The UI, map pins, and auction house search are in place, and the recipe database is generated from the Forever client's own data. The journal loads and renders in the Forever beta (build 1.60.1.70450).
+The UI, map pins, and auction house search are in place. The recipe database is generated from the Forever client's own data. Recipe drop sources, gathering nodes, zone levels, and fishing catches are empty until Wowhead's Forever database opens; opening a profession window in game fills in Blizzard's own source text for that profession. The journal loads and renders in the Forever beta (build 1.60.1.70450).
 
 ## Install
 

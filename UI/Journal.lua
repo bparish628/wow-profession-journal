@@ -387,6 +387,9 @@ end
 local function RenderList()
   local list = PJ.ListFor(selectedProfession, journal.SearchBox:GetText(), PJ.db.filters, collapsed)
   journal.ScrollBox:SetDataProvider(CreateDataProvider(list), ScrollBoxConstants.RetainScrollPosition)
+  journal.EmptyText:SetShown(#list == 0)
+  journal.EmptyText:SetText(journal.SearchBox:GetText() ~= "" and "No matches."
+    or "Nothing here yet. Gathering and fishing locations will come from Wowhead's Forever database once it opens.")
   journal:SetTitle(selectedProfession.name)
   journal:SetPortraitToAsset(selectedProfession.icon)
   for _, tab in ipairs(journal.Tabs) do
@@ -541,6 +544,10 @@ local function CreateRecipeList(frame)
   view:SetElementExtentCalculator(function(_, data) return data.header and 25 or 20 end)
   ScrollUtil.InitScrollBoxListWithScrollBar(scrollBox, scrollBar, view)
   frame.ScrollBox = scrollBox
+  frame.EmptyText = list:CreateFontString(nil, "ARTWORK", "GameFontDisable")
+  frame.EmptyText:SetPoint("TOPLEFT", scrollBox, "TOPLEFT", 12, -12)
+  frame.EmptyText:SetPoint("RIGHT", scrollBox, "RIGHT", -12, 0)
+  frame.EmptyText:SetJustifyH("LEFT")
   return list
 end
 

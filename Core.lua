@@ -21,8 +21,12 @@ function PJ.RecipesFor(professionID, query)
       list[#list + 1] = recipe
     end
   end
-  table.sort(list, function(a, b) return a.skill < b.skill end)
+  table.sort(list, function(a, b) return PJ.RequiredSkill(a) < PJ.RequiredSkill(b) end)
   return list
+end
+
+function PJ.RequiredSkill(recipe)
+  return recipe.skill or recipe.yellow
 end
 
 function PJ.RecipeName(recipe)
@@ -46,6 +50,7 @@ events:SetScript("OnEvent", function(_, _, loaded)
   if loaded ~= addonName then return end
   ProfessionJournalDB = ProfessionJournalDB or {}
   PJ.db = ProfessionJournalDB
+  PJ.db.sourceText = PJ.db.sourceText or {}
   events:UnregisterEvent("ADDON_LOADED")
 end)
 

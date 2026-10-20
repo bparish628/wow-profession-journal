@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mjs",
+    "data": "node scripts/build-data.mjs"
   },
   "devDependencies": {
     "luaparse": "^0.3.1"

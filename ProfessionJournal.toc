@@ -13,4 +13,5 @@ Data\Professions.lua
 Data\Recipes.lua
 Map.lua
 AuctionHouse.lua
+TradeSkill.lua
 UI\Journal.lua

@@ -2,6 +2,8 @@ local _, PJ = ...
 
 local LIST_WIDTH = 260
 local ROW_HEIGHT = 36
+local SLOT_WIDTH = 160
+local SLOT_HEIGHT = 44
 local SOURCE_KINDS = {
   trainer = { label = "Trainer", icon = "Interface\\Icons\\INV_Misc_Book_09" },
   drop = { label = "Drop", icon = "Interface\\Icons\\INV_Misc_Bag_10" },
@@ -12,39 +14,15 @@ local SOURCE_KINDS = {
   unknown = { label = "Source unknown", icon = "Interface\\Icons\\INV_Misc_QuestionMark" },
 }
 local UNKNOWN_SOURCE = { kind = "unknown" }
+local DIFFICULTY_COLORS = {
+  impossible = RED_FONT_COLOR,
+  optimal = CreateColor(1, 0.5, 0.25),
+  medium = CreateColor(1, 1, 0),
+  easy = CreateColor(0.25, 0.75, 0.25),
+  trivial = CreateColor(0.5, 0.5, 0.5),
+}
 
 local journal, selectedProfession, selectedRecipe
-
-local function ResetRow(row)
-  row:Hide()
-  row:ClearAllPoints()
-  row.Border:Hide()
-  row.Count:SetText("")
-  row:SetScript("OnClick", nil)
-  row:SetScript("OnEnter", nil)
-  row:SetScript("OnLeave", GameTooltip_Hide)
-end
-
-local function CreateRow(parent, height)
-  local row = CreateFrame("Button", nil, parent)
-  row:SetHeight(height)
-  row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
-  row.Icon = row:CreateTexture(nil, "ARTWORK")
-  row.Icon:SetSize(height - 6, height - 6)
-  row.Icon:SetPoint("LEFT", 4, 0)
-  row.Border = row:CreateTexture(nil, "OVERLAY")
-  row.Border:SetTexture("Interface\\Common\\WhiteIconFrame")
-  row.Border:SetAllPoints(row.Icon)
-  row.Count = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-  row.Count:SetPoint("RIGHT", -8, 0)
-  row.Text = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-  row.Text:SetPoint("LEFT", row.Icon, "RIGHT", 8, 0)
-  row.Text:SetPoint("RIGHT", row.Count, "LEFT", -8, 0)
-  row.Text:SetJustifyH("LEFT")
-  row.Text:SetWordWrap(false)
-  ResetRow(row)
-  return row
-end
 
 local function ShowTextTooltip(owner, text)
   GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
@@ -52,7 +30,13 @@ local function ShowTextTooltip(owner, text)
   GameTooltip:Show()
 end
 
-local function ItemLabel(itemID)
+local function ShowItemTooltip(owner, itemID)
+  GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+  GameTooltip:SetItemByID(itemID)
+  GameTooltip:Show()
+end
+
+local function ItemName(itemID)
   local name = C_Item.GetItemNameByID(itemID)
   if not name then
     C_Item.RequestLoadItemDataByID(itemID)
@@ -67,24 +51,92 @@ local function HandleLinkClick(link)
   return IsModifiedClick() and link ~= nil and HandleModifiedItemClick(link)
 end
 
--- Shift-click links the item in chat and ctrl-click previews it, as anywhere
--- in the default UI. A plain click runs the row's own action.
-local function SetItemRow(row, itemID, onClick)
-  row.Icon:SetTexture(C_Item.GetItemIconByID(itemID))
+local function RecipeLink(recipe)
+  if recipe.creates then return select(2, C_Item.GetItemInfo(recipe.creates)) end
+  return C_Spell.GetSpellLink(recipe.spell)
+end
+
+local function SetQualityBorder(border, itemID)
   local quality = C_Item.GetItemQualityByID(itemID)
-  if quality and quality > Enum.ItemQuality.Common then
-    row.Border:SetVertexColor(ITEM_QUALITY_COLORS[quality].color:GetRGB())
-    row.Border:Show()
+  local show = quality ~= nil and quality > Enum.ItemQuality.Common
+  if show then border:SetVertexColor(ITEM_QUALITY_COLORS[quality].color:GetRGB()) end
+  border:SetShown(show)
+end
+
+local function CreateSectionHeader(parent, text)
+  local header = parent:CreateFontString(nil, "ARTWORK", "GameFontNormalMed2")
+  header:SetText(text)
+  local divider = parent:CreateTexture(nil, "ARTWORK")
+  divider:SetTexture("Interface\\Common\\UI-TooltipDivider-Transparent")
+  divider:SetHeight(8)
+  divider:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -1)
+  divider:SetPoint("RIGHT", parent, "RIGHT")
+  return header
+end
+
+-- A reagent slot in the style of the classic profession window: an item icon
+-- with the have/need count on it, beside the quest reward name frame.
+local function CreateItemSlot(parent)
+  local slot = CreateFrame("Button", nil, parent)
+  slot:SetSize(SLOT_WIDTH, SLOT_HEIGHT)
+  slot.Icon = slot:CreateTexture(nil, "ARTWORK")
+  slot.Icon:SetSize(37, 37)
+  slot.Icon:SetPoint("LEFT")
+  slot.Border = slot:CreateTexture(nil, "OVERLAY")
+  slot.Border:SetTexture("Interface\\Common\\WhiteIconFrame")
+  slot.Border:SetAllPoints(slot.Icon)
+  slot.Count = slot:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+  slot.Count:SetPoint("BOTTOMRIGHT", slot.Icon, "BOTTOMRIGHT", -2, 2)
+  local nameFrame = slot:CreateTexture(nil, "BACKGROUND")
+  nameFrame:SetTexture("Interface\\QuestFrame\\UI-QuestItemNameFrame")
+  nameFrame:SetSize(128, 64)
+  nameFrame:SetPoint("LEFT", slot.Icon, "RIGHT", -10, 0)
+  slot.Name = slot:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+  slot.Name:SetPoint("LEFT", slot.Icon, "RIGHT", 6, 0)
+  slot.Name:SetWidth(SLOT_WIDTH - 50)
+  slot.Name:SetJustifyH("LEFT")
+  slot.Name:SetMaxLines(2)
+  local highlight = slot:CreateTexture(nil, "HIGHLIGHT")
+  highlight:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
+  highlight:SetBlendMode("ADD")
+  highlight:SetAllPoints(slot.Icon)
+  slot:SetScript("OnLeave", GameTooltip_Hide)
+  return slot
+end
+
+local function SetItemSlot(slot, itemID, count)
+  slot.Icon:SetTexture(C_Item.GetItemIconByID(itemID))
+  SetQualityBorder(slot.Border, itemID)
+  slot.Name:SetText(ItemName(itemID))
+  if count then
+    local have = C_Item.GetItemCount(itemID, true)
+    local color = have >= count and HIGHLIGHT_FONT_COLOR or RED_FONT_COLOR
+    slot.Count:SetText(color:WrapTextInColorCode(("%d/%d"):format(have, count)))
+    slot.Icon:SetDesaturated(have < count)
+  else
+    slot.Count:SetText("")
+    slot.Icon:SetDesaturated(false)
   end
-  row.Text:SetText(ItemLabel(itemID))
-  row:SetScript("OnClick", function()
-    if not HandleLinkClick(select(2, C_Item.GetItemInfo(itemID))) then onClick() end
+  slot:SetScript("OnClick", function()
+    if not HandleLinkClick(select(2, C_Item.GetItemInfo(itemID))) then PJ.SearchAuctionHouse(itemID) end
   end)
-  row:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:SetItemByID(itemID)
-    GameTooltip:Show()
-  end)
+  slot:SetScript("OnEnter", function(self) ShowItemTooltip(self, itemID) end)
+end
+
+local function CreateSourceRow(parent)
+  local row = CreateFrame("Button", nil, parent)
+  row:SetHeight(24)
+  row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+  row.Icon = row:CreateTexture(nil, "ARTWORK")
+  row.Icon:SetSize(20, 20)
+  row.Icon:SetPoint("LEFT", 2, 0)
+  row.Text = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+  row.Text:SetPoint("LEFT", row.Icon, "RIGHT", 6, 0)
+  row.Text:SetPoint("RIGHT", -4, 0)
+  row.Text:SetJustifyH("LEFT")
+  row.Text:SetWordWrap(false)
+  row:SetScript("OnLeave", GameTooltip_Hide)
+  return row
 end
 
 local function SourceText(source)
@@ -97,82 +149,96 @@ local function SourceText(source)
   return text
 end
 
-local function SkillText(recipe)
-  local green = math.floor((recipe.yellow + recipe.grey) / 2)
-  local required = recipe.skill and ("Requires %d  "):format(recipe.skill) or ""
-  return required .. ORANGE_FONT_COLOR:WrapTextInColorCode(recipe.skill or "?") .. " "
-    .. YELLOW_FONT_COLOR:WrapTextInColorCode(recipe.yellow) .. " "
-    .. GREEN_FONT_COLOR:WrapTextInColorCode(green) .. " "
-    .. GRAY_FONT_COLOR:WrapTextInColorCode(recipe.grey)
+local function SetSourceRow(row, source)
+  row.Text:SetText(SourceText(source))
+  if source.map then
+    row.Icon:SetTexture("Interface\\Icons\\INV_Misc_Map_01")
+    row:SetScript("OnClick", function() PJ.ShowSourceOnMap(source) end)
+    row:SetScript("OnEnter", function(self)
+      ShowTextTooltip(self, ("Click to pin %.1f, %.1f on the world map"):format(source.x, source.y))
+    end)
+  else
+    row.Icon:SetTexture(SOURCE_KINDS[source.kind].icon)
+    row:SetScript("OnClick", nil)
+    row:SetScript("OnEnter", nil)
+  end
 end
 
-local function RecipeLink(recipe)
-  if recipe.creates then return select(2, C_Item.GetItemInfo(recipe.creates)) end
-  return C_Spell.GetSpellLink(recipe.spell)
+local function SkillText(recipe)
+  return ("Requires %d  "):format(PJ.RequiredSkill(recipe))
+    .. DIFFICULTY_COLORS.optimal:WrapTextInColorCode(PJ.RequiredSkill(recipe)) .. " "
+    .. DIFFICULTY_COLORS.medium:WrapTextInColorCode(recipe.yellow) .. " "
+    .. DIFFICULTY_COLORS.easy:WrapTextInColorCode(PJ.GreenSkill(recipe)) .. " "
+    .. DIFFICULTY_COLORS.trivial:WrapTextInColorCode(recipe.grey)
 end
 
 local function RenderDetail()
   local detail = journal.Detail
-  detail.rows:ReleaseAll()
+  detail.sourceRows:ReleaseAll()
+  detail.slots:ReleaseAll()
   local recipe = selectedRecipe
   detail:SetShown(recipe ~= nil)
   if not recipe then return end
 
   detail.Icon:SetTexture(PJ.RecipeIcon(recipe))
-  detail.Name:SetText(recipe.creates and ItemLabel(recipe.creates) or PJ.RecipeName(recipe))
+  if recipe.creates then SetQualityBorder(detail.IconBorder, recipe.creates) else detail.IconBorder:Hide() end
+  detail.Name:SetText(recipe.creates and ItemName(recipe.creates) or PJ.RecipeName(recipe))
   local status = PJ.IsKnown(recipe) and GREEN_FONT_COLOR:WrapTextInColorCode("Known")
     or GRAY_FONT_COLOR:WrapTextInColorCode("Not learned")
-  detail.Skill:SetText(SkillText(recipe) .. "  " .. status)
+  detail.Skill:SetText(SkillText(recipe) .. "   " .. status)
 
-  local anchor = detail.SourcesHeader
+  local anchor, anchorGap = detail.SourcesHeader, 12
   local function Place(region, gap)
-    region:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -(gap or 4))
-    region:SetPoint("RIGHT", detail, "RIGHT", -8, 0)
+    region:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -(gap or anchorGap))
+    region:SetPoint("RIGHT", detail, "RIGHT", -4, 0)
     region:Show()
-    anchor = region
+    anchor, anchorGap = region, 2
   end
 
   if recipe.recipeItem then
-    local row = detail.rows:Acquire()
-    SetItemRow(row, recipe.recipeItem, function() PJ.SearchAuctionHouse(recipe.recipeItem) end)
-    Place(row)
+    local slot = detail.slots:Acquire()
+    SetItemSlot(slot, recipe.recipeItem)
+    slot:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -anchorGap)
+    slot:Show()
+    anchor, anchorGap = slot, 4
   end
 
   local blizzardText = PJ.BlizzardSourceText(recipe)
   local sources = recipe.sources
   if #sources == 0 and not blizzardText then sources = { UNKNOWN_SOURCE } end
   for _, source in ipairs(sources) do
-    local row = detail.rows:Acquire()
-    row.Text:SetText(SourceText(source))
-    if source.map then
-      row.Icon:SetTexture("Interface\\Icons\\INV_Misc_Map_01")
-      row:SetScript("OnClick", function() PJ.ShowSourceOnMap(source) end)
-      row:SetScript("OnEnter", function(self)
-        ShowTextTooltip(self, ("Click to pin %.1f, %.1f on the world map"):format(source.x, source.y))
-      end)
-    else
-      row.Icon:SetTexture(SOURCE_KINDS[source.kind].icon)
-    end
+    local row = detail.sourceRows:Acquire()
+    SetSourceRow(row, source)
     Place(row)
   end
 
   detail.BlizzardSource:SetShown(blizzardText ~= nil)
   if blizzardText then
     detail.BlizzardSource:SetText(blizzardText)
-    Place(detail.BlizzardSource, 8)
+    Place(detail.BlizzardSource, 6)
   end
 
   detail.ReagentsHeader:ClearAllPoints()
-  Place(detail.ReagentsHeader, 16)
-  for _, reagent in ipairs(recipe.reagents) do
-    local row = detail.rows:Acquire()
-    SetItemRow(row, reagent.item, function() PJ.SearchAuctionHouse(reagent.item) end)
-    local have = C_Item.GetItemCount(reagent.item, true)
-    local color = have >= reagent.count and GREEN_FONT_COLOR or RED_FONT_COLOR
-    row.Count:SetText(color:WrapTextInColorCode(("%d/%d"):format(have, reagent.count)))
-    Place(row)
+  detail.ReagentsHeader:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -18)
+  for i, reagent in ipairs(recipe.reagents) do
+    local slot = detail.slots:Acquire()
+    SetItemSlot(slot, reagent.item, reagent.count)
+    local column, line = (i - 1) % 2, math.floor((i - 1) / 2)
+    slot:SetPoint("TOPLEFT", detail.ReagentsHeader, "BOTTOMLEFT", column * (SLOT_WIDTH + 12), -12 - line * SLOT_HEIGHT)
+    slot:Show()
   end
-  detail.AuctionHint:SetShown(PJ.IsAuctionHouseOpen())
+  detail.AuctionHint:SetText(PJ.IsAuctionHouseOpen()
+    and "Click an item to search the auction house. Shift-click to link it."
+    or "Shift-click an item to link it. Open the auction house to search for it.")
+end
+
+local function RenderRank()
+  local rank, maxRank = PJ.PlayerSkill(selectedProfession)
+  local bar = journal.RankBar
+  bar:SetMinMaxValues(0, maxRank or 1)
+  bar:SetValue(rank or 0)
+  bar.Text:SetText(rank and ("%s  %d/%d"):format(selectedProfession.name, rank, maxRank)
+    or ("%s  (not learned)"):format(selectedProfession.name))
 end
 
 local function RenderList()
@@ -183,6 +249,7 @@ local function RenderList()
   for _, tab in ipairs(journal.Tabs) do
     tab:SetChecked(tab.profession == selectedProfession)
   end
+  RenderRank()
 end
 
 local function SelectProfession(profession)
@@ -203,27 +270,31 @@ local function InitRecipeRow(row, recipe)
     row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
     row.Selected = row:CreateTexture(nil, "BACKGROUND")
     row.Selected:SetAllPoints()
-    row.Selected:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
-    row.Selected:SetBlendMode("ADD")
+    row.Selected:SetTexture("Interface\\Buttons\\UI-Listbox-Highlight2")
+    row.Selected:SetVertexColor(1, 0.82, 0, 0.35)
     row.Icon = row:CreateTexture(nil, "ARTWORK")
-    row.Icon:SetSize(ROW_HEIGHT - 6, ROW_HEIGHT - 6)
-    row.Icon:SetPoint("LEFT", 4, 0)
+    row.Icon:SetSize(ROW_HEIGHT - 8, ROW_HEIGHT - 8)
+    row.Icon:SetPoint("LEFT", 6, 0)
     row.Name = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    row.Name:SetPoint("TOPLEFT", row.Icon, "TOPRIGHT", 8, -2)
+    row.Name:SetPoint("TOPLEFT", row.Icon, "TOPRIGHT", 8, -1)
     row.Name:SetPoint("RIGHT", -6, 0)
     row.Name:SetJustifyH("LEFT")
     row.Name:SetWordWrap(false)
-    row.Sub = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    row.Sub:SetPoint("BOTTOMLEFT", row.Icon, "BOTTOMRIGHT", 8, 2)
+    row.Sub = row:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    row.Sub:SetPoint("BOTTOMLEFT", row.Icon, "BOTTOMRIGHT", 8, 1)
     row:SetScript("OnClick", function(self)
       local data = self:GetElementData()
       if not HandleLinkClick(RecipeLink(data)) then SelectRecipe(data) end
     end)
   end
+  local rank = PJ.PlayerSkill(selectedProfession)
+  local color = rank and DIFFICULTY_COLORS[PJ.Difficulty(recipe, rank)] or NORMAL_FONT_COLOR
   row.Icon:SetTexture(PJ.RecipeIcon(recipe))
   row.Icon:SetDesaturated(not PJ.IsKnown(recipe))
   row.Name:SetText(PJ.RecipeName(recipe))
-  row.Sub:SetText(("Skill %d"):format(PJ.RequiredSkill(recipe)))
+  row.Name:SetTextColor(color:GetRGB())
+  row.Sub:SetText(PJ.IsKnown(recipe) and ("Skill %d"):format(PJ.RequiredSkill(recipe))
+    or ("Skill %d  -  not learned"):format(PJ.RequiredSkill(recipe)))
   row.Selected:SetShown(recipe == selectedRecipe)
 end
 
@@ -245,13 +316,31 @@ local function CreateProfessionTab(frame, profession, index)
   return tab
 end
 
+local function CreateRankBar(frame)
+  local bar = CreateFrame("StatusBar", nil, frame)
+  bar:SetSize(220, 14)
+  bar:SetPoint("TOPLEFT", frame, "TOPLEFT", 74, -36)
+  bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+  bar:SetStatusBarColor(0.25, 0.25, 0.75)
+  local background = bar:CreateTexture(nil, "BACKGROUND")
+  background:SetAllPoints()
+  background:SetColorTexture(0, 0, 0, 0.5)
+  local border = bar:CreateTexture(nil, "OVERLAY")
+  border:SetTexture("Interface\\PaperDollInfoFrame\\UI-Character-Skills-BarBorder")
+  border:SetPoint("TOPLEFT", -5, 9)
+  border:SetPoint("BOTTOMRIGHT", 5, -9)
+  bar.Text = bar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  bar.Text:SetPoint("CENTER", 0, 1)
+  return bar
+end
+
 local function CreateDetail(frame)
   local detail = CreateFrame("Frame", nil, frame.Inset)
-  detail:SetPoint("TOPLEFT", frame.Inset, "TOPLEFT", LIST_WIDTH + 34, -10)
-  detail:SetPoint("BOTTOMRIGHT", frame.Inset, "BOTTOMRIGHT", -10, 10)
+  detail:SetPoint("TOPLEFT", frame.Inset, "TOPLEFT", LIST_WIDTH + 34, -12)
+  detail:SetPoint("BOTTOMRIGHT", frame.Inset, "BOTTOMRIGHT", -12, 10)
 
   local iconButton = CreateFrame("Button", nil, detail)
-  iconButton:SetSize(40, 40)
+  iconButton:SetSize(44, 44)
   iconButton:SetPoint("TOPLEFT")
   iconButton:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -266,31 +355,33 @@ local function CreateDetail(frame)
   iconButton:SetScript("OnClick", function() HandleLinkClick(RecipeLink(selectedRecipe)) end)
   detail.Icon = iconButton:CreateTexture(nil, "ARTWORK")
   detail.Icon:SetAllPoints()
+  detail.IconBorder = iconButton:CreateTexture(nil, "OVERLAY")
+  detail.IconBorder:SetTexture("Interface\\Common\\WhiteIconFrame")
+  detail.IconBorder:SetAllPoints()
 
   detail.Name = detail:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-  detail.Name:SetPoint("TOPLEFT", iconButton, "TOPRIGHT", 10, -2)
+  detail.Name:SetPoint("TOPLEFT", iconButton, "TOPRIGHT", 10, -3)
   detail.Name:SetPoint("RIGHT")
   detail.Name:SetJustifyH("LEFT")
   detail.Skill = detail:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-  detail.Skill:SetPoint("BOTTOMLEFT", iconButton, "BOTTOMRIGHT", 10, 2)
-  detail.SourcesHeader = detail:CreateFontString(nil, "ARTWORK", "GameFontNormalMed2")
-  detail.SourcesHeader:SetPoint("TOPLEFT", iconButton, "BOTTOMLEFT", 0, -18)
-  detail.SourcesHeader:SetText("Sources")
+  detail.Skill:SetPoint("BOTTOMLEFT", iconButton, "BOTTOMRIGHT", 10, 3)
+  detail.SourcesHeader = CreateSectionHeader(detail, "Sources")
+  detail.SourcesHeader:SetPoint("TOPLEFT", iconButton, "BOTTOMLEFT", 0, -16)
   detail.BlizzardSource = detail:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
   detail.BlizzardSource:SetJustifyH("LEFT")
   detail.BlizzardSource:SetSpacing(2)
-  detail.ReagentsHeader = detail:CreateFontString(nil, "ARTWORK", "GameFontNormalMed2")
-  detail.ReagentsHeader:SetText("Reagents")
+  detail.ReagentsHeader = CreateSectionHeader(detail, "Reagents")
   detail.AuctionHint = detail:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
   detail.AuctionHint:SetPoint("BOTTOMLEFT")
-  detail.AuctionHint:SetText("Click an item to search the auction house. Shift-click to link it.")
-  detail.rows = CreateObjectPool(function() return CreateRow(detail, 28) end, function(_, row) ResetRow(row) end)
+  local function Reset(_, region) region:Hide(); region:ClearAllPoints() end
+  detail.sourceRows = CreateObjectPool(function() return CreateSourceRow(detail) end, Reset)
+  detail.slots = CreateObjectPool(function() return CreateItemSlot(detail) end, Reset)
   return detail
 end
 
 local function CreateJournal()
   local frame = CreateFrame("Frame", "ProfessionJournalFrame", UIParent, "ButtonFrameTemplate")
-  frame:SetSize(720, 520)
+  frame:SetSize(740, 540)
   frame:SetPoint("CENTER")
   frame:SetFrameStrata("HIGH")
   frame:SetToplevel(true)
@@ -308,19 +399,21 @@ local function CreateJournal()
     frame.Tabs[i] = CreateProfessionTab(frame, profession, i)
   end
 
+  frame.RankBar = CreateRankBar(frame)
+
   local search = CreateFrame("EditBox", nil, frame, "SearchBoxTemplate")
-  search:SetSize(LIST_WIDTH - 16, 20)
-  search:SetPoint("TOPLEFT", frame.Inset, "TOPLEFT", 12, -8)
+  search:SetSize(200, 20)
+  search:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -14, -33)
   search:HookScript("OnTextChanged", RenderList)
   frame.SearchBox = search
 
   local scrollBox = CreateFrame("Frame", nil, frame, "WowScrollBoxList")
-  scrollBox:SetPoint("TOPLEFT", frame.Inset, "TOPLEFT", 4, -34)
+  scrollBox:SetPoint("TOPLEFT", frame.Inset, "TOPLEFT", 4, -4)
   scrollBox:SetPoint("BOTTOMLEFT", frame.Inset, "BOTTOMLEFT", 4, 4)
   scrollBox:SetWidth(LIST_WIDTH)
   local scrollBar = CreateFrame("EventFrame", nil, frame, "MinimalScrollBar")
-  scrollBar:SetPoint("TOPLEFT", scrollBox, "TOPRIGHT", 4, 0)
-  scrollBar:SetPoint("BOTTOMLEFT", scrollBox, "BOTTOMRIGHT", 4, 0)
+  scrollBar:SetPoint("TOPLEFT", scrollBox, "TOPRIGHT", 6, -2)
+  scrollBar:SetPoint("BOTTOMLEFT", scrollBox, "BOTTOMRIGHT", 6, 2)
   local view = CreateScrollBoxListLinearView()
   view:SetElementExtent(ROW_HEIGHT)
   view:SetElementInitializer("Button", InitRecipeRow)
@@ -339,9 +432,13 @@ local function CreateJournal()
   frame:RegisterEvent("AUCTION_HOUSE_SHOW")
   frame:RegisterEvent("AUCTION_HOUSE_CLOSED")
   frame:RegisterEvent("BAG_UPDATE_DELAYED")
-  frame:SetScript("OnEvent", function(self)
-    if self:IsShown() then RenderDetail() end
+  frame:RegisterEvent("SKILL_LINES_CHANGED")
+  frame:SetScript("OnEvent", function(self, event)
+    if not self:IsShown() then return end
+    if event == "SKILL_LINES_CHANGED" then RenderList() end
+    RenderDetail()
   end)
+  frame:SetScript("OnShow", function() RenderList(); RenderDetail() end)
 
   return frame
 end
@@ -349,7 +446,13 @@ end
 function PJ.ToggleJournal()
   if not journal then
     journal = CreateJournal()
-    SelectProfession(PJ.professions[1])
+    for _, profession in ipairs(PJ.professions) do
+      if PJ.PlayerSkill(profession) then
+        selectedProfession = profession
+        break
+      end
+    end
+    selectedProfession = selectedProfession or PJ.professions[1]
   end
   journal:SetShown(not journal:IsShown())
 end

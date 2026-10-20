@@ -29,6 +29,29 @@ function PJ.RequiredSkill(recipe)
   return recipe.skill or recipe.yellow
 end
 
+function PJ.GreenSkill(recipe)
+  return math.floor((recipe.yellow + recipe.grey) / 2)
+end
+
+function PJ.PlayerSkill(profession)
+  for _, index in pairs({ GetProfessions() }) do
+    local _, _, rank, maxRank, _, _, skillLine = GetProfessionInfo(index)
+    if skillLine == profession.id or tContains(profession.tiers, skillLine) then
+      return rank, maxRank
+    end
+  end
+end
+
+-- The trade skill difficulty a recipe has at the given rank, as the default
+-- profession window colors it.
+function PJ.Difficulty(recipe, rank)
+  if rank < PJ.RequiredSkill(recipe) then return "impossible" end
+  if rank < recipe.yellow then return "optimal" end
+  if rank < PJ.GreenSkill(recipe) then return "medium" end
+  if rank < recipe.grey then return "easy" end
+  return "trivial"
+end
+
 function PJ.RecipeName(recipe)
   return C_Spell.GetSpellName(recipe.spell) or ("Spell " .. recipe.spell)
 end

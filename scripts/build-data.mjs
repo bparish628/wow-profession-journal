@@ -94,7 +94,10 @@ const [skillLines, abilities, spellReagents, spellEffects, itemEffects, itemXEff
 const parentIDs = new Set(skillLines.map((s) => num(s.ParentSkillLineID)).filter(Boolean));
 const professions = skillLines
   .filter((s) => parentIDs.has(num(s.ID)) && !/DNT/.test(s.DisplayName_lang))
-  .map((s) => ({ id: num(s.ID), name: s.DisplayName_lang, icon: num(s.SpellIconFileID) }));
+  .map((s) => ({
+    id: num(s.ID), name: s.DisplayName_lang, icon: num(s.SpellIconFileID),
+    tiers: skillLines.filter((c) => num(c.ParentSkillLineID) === num(s.ID)).map((c) => num(c.ID)),
+  }));
 const professionIDs = new Set(professions.map((p) => p.id));
 
 const spellName = new Map(spellNames.map((s) => [num(s.ID), s.Name_lang]));

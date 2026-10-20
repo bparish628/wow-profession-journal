@@ -10,25 +10,49 @@ const tocFiles = readFileSync(join(root, "ProfessionJournal.toc"), "utf8")
 
 const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
   entry.isDirectory() ? (entry.name === "node_modules" || entry.name.startsWith(".") ? [] : walk(join(dir, entry.name)))
-    : /.(lua|xml)$/.test(entry.name) ? [relative(root, join(dir, entry.name)).replaceAll("\\", "/")] : []);
-const luaFiles = walk(root);
+    : /\.(lua|xml)$/.test(entry.name) ? [relative(root, join(dir, entry.name)).replaceAll("\\", "/")] : []);
+const addonFiles = walk(root);
+
+// A name read as a global while the same file declares a local of that name
+// means the read comes before the declaration, so it resolves to nil in game.
+function usesBeforeDeclaration(ast) {
+  const locals = new Set();
+  const globalReads = [];
+  const visit = (node, parent, key) => {
+    if (!node || typeof node.type !== "string") return;
+    if (node.type === "Identifier") {
+      const isFieldName = (parent?.type === "MemberExpression" && key === "identifier")
+        || (parent?.type === "TableKeyString" && key === "key");
+      if (node.isLocal) locals.add(node.name);
+      else if (!isFieldName) globalReads.push(node);
+      return;
+    }
+    for (const [childKey, child] of Object.entries(node)) {
+      if (Array.isArray(child)) child.forEach((c) => visit(c, node, childKey));
+      else if (child && typeof child === "object") visit(child, node, childKey);
+    }
+  };
+  visit(ast);
+  return globalReads.filter((id) => locals.has(id.name));
+}
 
 let failed = false;
-for (const file of luaFiles.filter((f) => !tocFiles.includes(f))) {
-  console.error(`not listed in TOC: ${file}`);
+const fail = (message) => {
+  console.error(message);
   failed = true;
-}
-for (const file of tocFiles.filter((f) => !luaFiles.includes(f))) {
-  console.error(`TOC lists missing file: ${file}`);
-  failed = true;
-}
-for (const file of luaFiles.filter((f) => f.endsWith(".lua"))) {
+};
+for (const file of addonFiles.filter((f) => !tocFiles.includes(f))) fail(`not listed in TOC: ${file}`);
+for (const file of tocFiles.filter((f) => !addonFiles.includes(f))) fail(`TOC lists missing file: ${file}`);
+for (const file of addonFiles.filter((f) => f.endsWith(".lua"))) {
+  let ast;
   try {
-    luaparse.parse(readFileSync(join(root, file), "utf8"), { luaVersion: "5.1" });
+    ast = luaparse.parse(readFileSync(join(root, file), "utf8"), { luaVersion: "5.1", scope: true, locations: true });
   } catch (error) {
-    console.error(`${file}: ${error.message}`);
-    failed = true;
+    fail(`${file}: ${error.message}`);
+    continue;
   }
+  const reported = new Set(usesBeforeDeclaration(ast).map((id) => `${file}:${id.loc.start.line}: ${id.name}`));
+  for (const location of reported) fail(`${location} is used before its local declaration`);
 }
-console.log(failed ? "check failed" : `ok: ${luaFiles.length} files match the TOC and the Lua parses`);
+console.log(failed ? "check failed" : `ok: ${addonFiles.length} files match the TOC, the Lua parses, and no local is used before it is declared`);
 process.exit(failed ? 1 : 0);

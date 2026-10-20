@@ -311,6 +311,58 @@ local function RenderDetail()
     or "Shift-click an item to link it. Open the auction house to search for it.")
 end
 
+-- Built like ProfessionsRankBarTemplate: a full-width animated fill strip
+-- revealed by widening a mask to the player's progress.
+local RANK_BAR_WIDTH, RANK_FILL_HEIGHT = 453, 18
+
+local function CreateRankBar(frame)
+  local bar = CreateFrame("Frame", nil, frame)
+  bar:SetSize(RANK_BAR_WIDTH, RANK_FILL_HEIGHT)
+  bar:SetPoint("TOPLEFT", 110, -40)
+  local background = bar:CreateTexture(nil, "ARTWORK", nil, 1)
+  background:SetAtlas("Professions-skillbar-bg", true)
+  background:SetPoint("TOPLEFT")
+  bar.Fill = bar:CreateTexture(nil, "ARTWORK", nil, 2)
+  bar.Fill:SetSize(441, RANK_FILL_HEIGHT)
+  bar.Fill:SetPoint("TOPLEFT", 5, -3)
+  bar.Mask = bar:CreateMaskTexture()
+  bar.Mask:SetAtlas("Professions-skillbar-mask", true)
+  bar.Mask:SetPoint("LEFT", bar.Fill, "LEFT", 1, 0)
+  bar.Fill:AddMaskTexture(bar.Mask)
+  local border = bar:CreateTexture(nil, "ARTWORK", nil, 3)
+  border:SetAtlas("Professions-skillbar-frame")
+  border:SetSize(451, 29)
+  border:SetPoint("TOPLEFT")
+  bar.Animation = bar.Fill:CreateAnimationGroup()
+  bar.Animation:SetToFinalAlpha(true)
+  bar.Flipbook = bar.Animation:CreateAnimation("FlipBook")
+  bar.Flipbook:SetDuration(2)
+  bar.Flipbook:SetFlipBookColumns(2)
+  local rankText = CreateFrame("Frame", nil, bar)
+  rankText:SetFrameLevel(bar:GetFrameLevel() + 5)
+  rankText:SetPoint("LEFT", 0, -3)
+  rankText:SetPoint("RIGHT", 0, -3)
+  rankText:SetHeight(RANK_FILL_HEIGHT)
+  bar.Text = rankText:CreateFontString(nil, "ARTWORK", "Number12FontOutline")
+  bar.Text:SetPoint("CENTER")
+  return bar
+end
+
+local function SetRankBarFill(bar, profession, progress)
+  local atlas = "Skillbar_Fill_Flipbook_" .. profession.name:gsub(" ", "")
+  local info = C_Texture.GetAtlasInfo(atlas)
+  if not info then
+    atlas = "Skillbar_Fill_Flipbook_DefaultBlue"
+    info = C_Texture.GetAtlasInfo(atlas)
+  end
+  bar.Fill:SetAtlas(atlas, false)
+  local rows = info.height / RANK_FILL_HEIGHT
+  bar.Flipbook:SetFlipBookRows(rows)
+  bar.Flipbook:SetFlipBookFrames(rows * 2)
+  bar.Animation:Restart()
+  bar.Mask:SetWidth(math.max(1, bar:GetWidth() * progress))
+end
+
 local function RenderRank()
   local rank, maxRank = PJ.PlayerSkill(selectedProfession)
   local bar = journal.RankBar
@@ -421,58 +473,6 @@ local function CreateProfessionTabs(frame)
     end
   end
   return tabs
-end
-
--- Built like ProfessionsRankBarTemplate: a full-width animated fill strip
--- revealed by widening a mask to the player's progress.
-local RANK_BAR_WIDTH, RANK_FILL_HEIGHT = 453, 18
-
-local function CreateRankBar(frame)
-  local bar = CreateFrame("Frame", nil, frame)
-  bar:SetSize(RANK_BAR_WIDTH, RANK_FILL_HEIGHT)
-  bar:SetPoint("TOPLEFT", 110, -40)
-  local background = bar:CreateTexture(nil, "ARTWORK", nil, 1)
-  background:SetAtlas("Professions-skillbar-bg", true)
-  background:SetPoint("TOPLEFT")
-  bar.Fill = bar:CreateTexture(nil, "ARTWORK", nil, 2)
-  bar.Fill:SetSize(441, RANK_FILL_HEIGHT)
-  bar.Fill:SetPoint("TOPLEFT", 5, -3)
-  bar.Mask = bar:CreateMaskTexture()
-  bar.Mask:SetAtlas("Professions-skillbar-mask", true)
-  bar.Mask:SetPoint("LEFT", bar.Fill, "LEFT", 1, 0)
-  bar.Fill:AddMaskTexture(bar.Mask)
-  local border = bar:CreateTexture(nil, "ARTWORK", nil, 3)
-  border:SetAtlas("Professions-skillbar-frame")
-  border:SetSize(451, 29)
-  border:SetPoint("TOPLEFT")
-  bar.Animation = bar.Fill:CreateAnimationGroup()
-  bar.Animation:SetToFinalAlpha(true)
-  bar.Flipbook = bar.Animation:CreateAnimation("FlipBook")
-  bar.Flipbook:SetDuration(2)
-  bar.Flipbook:SetFlipBookColumns(2)
-  local rankText = CreateFrame("Frame", nil, bar)
-  rankText:SetFrameLevel(bar:GetFrameLevel() + 5)
-  rankText:SetPoint("LEFT", 0, -3)
-  rankText:SetPoint("RIGHT", 0, -3)
-  rankText:SetHeight(RANK_FILL_HEIGHT)
-  bar.Text = rankText:CreateFontString(nil, "ARTWORK", "Number12FontOutline")
-  bar.Text:SetPoint("CENTER")
-  return bar
-end
-
-local function SetRankBarFill(bar, profession, progress)
-  local atlas = "Skillbar_Fill_Flipbook_" .. profession.name:gsub(" ", "")
-  local info = C_Texture.GetAtlasInfo(atlas)
-  if not info then
-    atlas = "Skillbar_Fill_Flipbook_DefaultBlue"
-    info = C_Texture.GetAtlasInfo(atlas)
-  end
-  bar.Fill:SetAtlas(atlas, false)
-  local rows = info.height / RANK_FILL_HEIGHT
-  bar.Flipbook:SetFlipBookRows(rows)
-  bar.Flipbook:SetFlipBookFrames(rows * 2)
-  bar.Animation:Restart()
-  bar.Mask:SetWidth(math.max(1, bar:GetWidth() * progress))
 end
 
 local function CreateFilterDropdown(parent)

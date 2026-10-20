@@ -1,0 +1,6 @@
+package-as: ProfessionJournal
+
+ignore:
+  - scripts
+  - package.json
+  - package-lock.json

@@ -1,0 +1,16 @@
+## Interface: 16001
+## Title: Profession Journal
+## Notes: Every profession and recipe, where recipes drop, and one-click auction house searches for reagents.
+## Author: bparish628
+## Version: @project-version@
+## SavedVariables: ProfessionJournalDB
+## IconTexture: Interface\Icons\INV_Misc_Book_11
+## AddonCompartmentFunc: ProfessionJournal_OnAddonCompartmentClick
+## Category: Professions
+
+Core.lua
+Data\Professions.lua
+Data\Recipes.lua
+Map.lua
+AuctionHouse.lua
+UI\Journal.lua
